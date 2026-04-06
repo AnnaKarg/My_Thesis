@@ -1,4 +1,4 @@
-from app import app
+from core.app import app
 from langchain_core.messages import HumanMessage
 
 def test_logic():
@@ -18,7 +18,7 @@ def test_logic():
             print(f"\n >>> Είμαστε στο Node: {node_name} <<<")
             
             if node_name == "mentor":
-                print(f"Mentor: {output['messages'][-1].content}...") 
+                print(f"Mentor: {output['messages'][-1].content}") 
             
             if node_name == "debugger":
                 print(f"Debugger Report: {output.get('debug_report', 'No report')}")

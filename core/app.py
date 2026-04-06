@@ -1,5 +1,5 @@
 from langgraph.graph import StateGraph, START, END
-from state import AgentState
+from core.state import AgentState
 from agents.mentor import mentoring_node
 from agents.debugger import debugging_node
 from agents.assessor import assessment_node
