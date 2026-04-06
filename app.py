@@ -1,8 +1,8 @@
 from langgraph.graph import StateGraph, START, END
 from state import AgentState
-from mentor import mentoring_node
-from debugger import debugging_node
-from assessor import assessment_node
+from agents.mentor import mentoring_node
+from agents.debugger import debugging_node
+from agents.assessor import assessment_node
 
 # 1. Αρχικοποίηση του Γραφήματος με το State που ορίσαμε
 workflow = StateGraph(AgentState)
