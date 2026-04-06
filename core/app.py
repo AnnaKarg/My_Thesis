@@ -4,21 +4,31 @@ from agents.mentor import mentoring_node
 from agents.debugger import debugging_node
 from agents.assessor import assessment_node
 
-# 1. Αρχικοποίηση του Γραφήματος με το State που ορίσαμε
+def route_after_mentor(state: AgentState):
+    student_code = state.get("student_code", "").strip()
+    if not student_code:
+        return END 
+    return "debugger"
+
 workflow = StateGraph(AgentState)
 
-# 2. Προσθήκη των Κόμβων (Nodes)
 workflow.add_node("mentor", mentoring_node)
 workflow.add_node("debugger", debugging_node)
 workflow.add_node("assessor", assessment_node)
 
-# 3. Ορισμός των Ακμών (Edges) 
 workflow.add_edge(START, "mentor") 
 
-workflow.add_edge("mentor", "debugger")
+workflow.add_conditional_edges(
+    "mentor",
+    route_after_mentor,
+    {
+        "debugger": "debugger",
+        END: END
+    }
+)
+
 workflow.add_edge("debugger", "assessor")
 
-# 4. Απόφαση Ροής (Conditional Edge) 
 def route_after_assessment(state: AgentState):
     if state["is_correct"]:
         return END 
@@ -34,7 +44,5 @@ workflow.add_conditional_edges(
     }
 )
 
-# 5. Compile του Γραφήματος
 app = workflow.compile()
-
-print("--- Το Agentic Graph είναι έτοιμο! ---")
+print("--- Το Agentic Graph είναι έτοιμο με ασφάλεια! ---")

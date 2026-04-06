@@ -4,7 +4,9 @@ from langchain_groq import ChatGroq
 
 load_dotenv() 
 
-llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.7)
+#llm = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.7)
+#Prosorino
+llm = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0.7)
 
 def mentoring_node(state):
     """
