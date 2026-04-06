@@ -27,19 +27,32 @@ async def chat(username: str, message: str, db: AsyncSession = Depends(get_db)):
         await db.commit()
         await db.refresh(user)
 
+    extracted_code = ""
+    if "CODE:" in message:
+        try:
+  
+            extracted_code = message.split("CODE:")[1].strip()
+        except IndexError:
+            extracted_code = ""
+
+
+    lesson_titles = ["Variables", "Lists", "Loops", "Conditions", "Functions", "Errors"]
+
+    idx = max(0, min(user.current_lesson_id - 1, len(lesson_titles) - 1))
+    current_title = lesson_titles[idx]
+
     state = {
         "messages": [HumanMessage(content=message)],
-        "student_code": "", # Εδώ θα μπαίνει ο κώδικας του φοιτητή αργότερα
+        "student_code": extracted_code, 
         "debug_report": "",
         "is_correct": False,
-        "current_lesson": "Variables"
+        "current_lesson": current_title 
     }
 
     try:
-
         output = await langgraph_app.ainvoke(
             state, 
-            config={"recursion_limit": 5}
+            config={"recursion_limit": 10}
         )
         ai_response = output["messages"][-1].content
     except Exception as e:
