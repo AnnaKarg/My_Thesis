@@ -5,10 +5,22 @@ from agents.debugger import debugging_node
 from agents.assessor import assessment_node
 
 def route_after_mentor(state: AgentState):
+
+    user_msg = state["messages"][-1].content.lower()
     student_code = state.get("student_code", "").strip()
-    if not student_code:
-        return END 
-    return "debugger"
+
+    exit_words = ["επόμενο", "τέλος", "όχι", "προχώρα", "έτοιμη", "έτοιμος"]
+    if any(word in user_msg for word in exit_words):
+        return END
+
+    if student_code:
+        return "debugger"
+    
+    return END
+
+def route_after_assessment(state: AgentState):
+
+    return "mentor"
 
 workflow = StateGraph(AgentState)
 
@@ -29,20 +41,13 @@ workflow.add_conditional_edges(
 
 workflow.add_edge("debugger", "assessor")
 
-def route_after_assessment(state: AgentState):
-    if state["is_correct"]:
-        return END 
-    else:
-        return "mentor" 
-
 workflow.add_conditional_edges(
     "assessor",
     route_after_assessment,
     {
-        END: END,
         "mentor": "mentor"
     }
 )
 
 app = workflow.compile()
-print("--- Το Agentic Graph είναι έτοιμο με ασφάλεια! ---")
+print("--- Το Agentic Graph αναβαθμίστηκε με Feedback Loop! ---")
