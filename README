@@ -1,0 +1,8 @@
+# My Thesis: AI Python Tutor 🤖
+
+[cite_start]Αυτή η διπλωματική αφορά τη σχεδίαση και υλοποίηση ενός **Autonomous Agent** για την υποστήριξη φοιτητών στον προγραμματισμό[cite: 1].
+
+## Τεχνολογίες
+* [cite_start]**Backend:** FastAPI [cite: 7, 15, 49]
+* [cite_start]**AI Logic:** LangGraph & LangChain 
+* [cite_start]**LLM:** Llama 3 (μέσω Groq) 
