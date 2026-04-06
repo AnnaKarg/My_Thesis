@@ -19,7 +19,7 @@ def assistant(state: State):
     response = llm.invoke(state["messages"])
     return {"messages": [response]}
 
-# 5. Χτίσιμο Γραφήματος (LangGraph)
+# 5. Χτίσιμο Γραφήματος (LangGraph) 
 builder = StateGraph(State)
 builder.add_node("assistant", assistant)
 builder.add_edge(START, "assistant")
