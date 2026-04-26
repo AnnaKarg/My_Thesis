@@ -1,53 +1,32 @@
-from langgraph.graph import StateGraph, START, END
-from core.state import AgentState
-from agents.mentor import mentoring_node
-from agents.debugger import debugging_node
-from agents.assessor import assessment_node
+from langgraph.graph import StateGraph, START # Κλάση που ορίζει τη ροή του προγράμματος με βάση την κατάσταση του πράκτορα
+from core.state import AgentState # Κλάση που ορίζει την κατάσταση του πράκτορα
+from agents.mentor import mentoring_node # Κύρια συνάρτηση που διαχειρίζεται τη λογική του Mentor βάσει του τρέχοντος state
+from agents.debugger import debugging_node # Κύρια συνάρτηση που διαχειρίζεται τη λογική του Debugger βάσει του τρέχοντος state
+from agents.assessor import assessment_node # Κύρια συνάρτηση που διαχειρίζεται τη λογική του Assessor βάσει του τρέχοντος state
 
-def route_after_mentor(state: AgentState):
 
-    user_msg = state["messages"][-1].content.lower()
+def input_router(state: AgentState): # Συνάρτηση που καθορίζει ποιον κόμβο θα επισκεφθεί ο πράκτορας με βάση την τρέχουσα κατάσταση
+    messages = state.get("messages", [])
     student_code = state.get("student_code", "").strip()
 
-    exit_words = ["επόμενο", "τέλος", "όχι", "προχώρα", "έτοιμη", "έτοιμος"]
-    if any(word in user_msg for word in exit_words):
-        return END
+    if not messages:
+        return "mentor"
 
     if student_code:
         return "debugger"
-    
-    return END
-
-def route_after_assessment(state: AgentState):
 
     return "mentor"
 
-workflow = StateGraph(AgentState)
 
-workflow.add_node("mentor", mentoring_node)
-workflow.add_node("debugger", debugging_node)
-workflow.add_node("assessor", assessment_node)
+workflow = StateGraph(AgentState) # Δημιουργία ενός γράφου κατάστασης που θα διαχειρίζεται την κατάσταση του πράκτορα και τη ροή του προγράμματος
 
-workflow.add_edge(START, "mentor") 
+workflow.add_node("mentor", mentoring_node) # Προσθήκη του κόμβου "mentor" στον γράφο
+workflow.add_node("debugger", debugging_node)# Προσθήκη του κόμβου "debugger" στον γράφο
+workflow.add_node("assessor", assessment_node) # Προσθήκη του κόμβου "assessor" στον γράφο
 
-workflow.add_conditional_edges(
-    "mentor",
-    route_after_mentor,
-    {
-        "debugger": "debugger",
-        END: END
-    }
-)
+workflow.add_conditional_edges(START, input_router) # Προσθήκη ακμών που καθορίζουν τη ροή του προγράμματος
 
-workflow.add_edge("debugger", "assessor")
+workflow.add_edge("debugger", "assessor") # Προσθήκη ακμής που καθορίζει ότι μετά τον κόμβο "debugger" θα ακολουθεί ο κόμβος "assessor"
+workflow.add_edge("assessor", "mentor") # Προσθήκη ακμής που καθορίζει ότι μετά τον κόμβο "assessor" θα ακολουθεί ο κόμβος "mentor"
 
-workflow.add_conditional_edges(
-    "assessor",
-    route_after_assessment,
-    {
-        "mentor": "mentor"
-    }
-)
-
-app = workflow.compile()
-print("--- Το Agentic Graph αναβαθμίστηκε με Feedback Loop! ---")
+app = workflow.compile() 

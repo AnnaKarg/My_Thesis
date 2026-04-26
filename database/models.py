@@ -1,24 +1,20 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Text
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, Float, Boolean # Εισάγουμε τα απαραίτητα στοιχεία από το SQLAlchemy για να ορίσουμε τα πεδία των μοντέλων μας
+from database.session import Base # Εισάγουμε το Base από το αρχείο session για να ορίσουμε τα μοντέλα μας
 
-Base = declarative_base()
-
-class User(Base):
+class User(Base): # Ορίζουμε το μοντέλο User που αντιπροσωπεύει τους χρήστες της εφαρμογής
     __tablename__ = "users"
-    
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
+    experience_level = Column(String, default="beginner")
+    current_lesson_id = Column(Integer, default=1)
+    profile_checked = Column(Boolean, default=False)
 
-    current_lesson_id = Column(Integer, default=1) # Σε ποιο μάθημα είναι (1-6)
-
-class ChatHistory(Base):
+class ChatHistory(Base): # Ορίζουμε το μοντέλο ChatHistory που αντιπροσωπεύει το ιστορικό συνομιλιών των χρηστών με τον Mentor
     __tablename__ = "chat_histories"
-    
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    role = Column(String) 
-    content = Column(Text) 
-    
-    user = relationship("User", back_populates="messages")
-
-User.messages = relationship("ChatHistory", order_by=ChatHistory.id, back_populates="user")
+    role = Column(String)
+    content = Column(Text)
+    time_spent = Column(Float, default=0.0) 
+    attempts_count = Column(Integer, default=0)

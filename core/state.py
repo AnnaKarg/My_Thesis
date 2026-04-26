@@ -1,18 +1,24 @@
-from typing import Annotated, TypedDict, List
-from langgraph.graph.message import add_messages
+from typing import Annotated, TypedDict, List  # Εργαλεία typing για ορισμό δομής και τύπων στο state του agent
+from langgraph.graph.message import add_messages # Reducer της LangGraph για συγχώνευση μηνυμάτων στο state
+from langchain_core.messages import BaseMessage # Βασικός τύπος μηνύματος της LangChain για το πεδίο messages
 
-class AgentState(TypedDict):
-    # Το ιστορικό της συνομιλίας (χρησιμοποιείται add_messages για να προσθέτει νέα μηνύματα)
-    messages: Annotated[List, add_messages]
-    
-    # Ο κώδικας που γράφει ο φοιτητής στον editor
+class AgentState(TypedDict): # Ορισμός της δομής του state του agent με συγκεκριμένα πεδία και τύπους
+    messages: Annotated[List[BaseMessage], add_messages] # Λίστα μηνυμάτων που θα συγχωνευτούν με τη βοήθεια του add_messages reducer
+
     student_code: str 
-    
-    # Η τεχνική αναφορά του Debugging Agent
+    success_criteria: list
     debug_report: str 
-    
-    # Το αποτέλεσμα της αξιολόγησης (True αν είναι σωστό, False αν όχι)
     is_correct: bool 
-    
-    # Σε ποια ενότητα από τις 6 βρίσκεται ο φοιτητής
-    current_lesson: str 
+
+    current_lesson: str
+    current_lesson_id: int
+
+    profile_checked: bool
+
+    experience_level: str
+    attempts_count: int
+
+    time_spent: float
+    task_started: bool
+
+    is_first_login: bool 
