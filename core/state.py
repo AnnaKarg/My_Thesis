@@ -12,6 +12,8 @@ class AgentState(TypedDict): # Ορισμός της δομής του state τ�
 
     current_lesson: str
     current_lesson_id: int
+    current_task: str
+    performance_summary: str
 
     profile_checked: bool
 
@@ -20,5 +22,13 @@ class AgentState(TypedDict): # Ορισμός της δομής του state τ�
 
     time_spent: float
     task_started: bool
+    awaiting_questions: bool
+    event_type: str
+    hint_count: int
+
+    assessment_feedback: str
+    assessment_score: int
+    assessment_decision: str
+    understanding_level: str
 
     is_first_login: bool 

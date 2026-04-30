@@ -32,24 +32,6 @@ def pick_lesson(state): # Επιλέγει το τρέχον μάθημα βάσ
     lesson_id = state.get("current_lesson_id", 1)
     return next((l for l in lessons if l["id"] == lesson_id), lessons[0])
 
-def generate_random_task(lesson, difficulty): 
-    templates_dict = lesson.get("task_templates", {}) # Λεξικό με templates για κάθε επίπεδο δυσκολίας
-    templates = templates_dict.get(difficulty, templates_dict.get("easy", [])) # Επιλογή λίστας templates βάσει δυσκολίας (easy/hard)
-    
-    if not templates:
-        return "Γράψε ένα απλό πρόγραμμα Python."
-
-    template = random.choice(templates) # Επιλέγει τυχαία ένα template από τη λίστα
-    values = lesson.get("possible_values", {}) # Λεξικό με πιθανές τιμές για τα placeholders στα templates
-
-    for key, options in values.items(): 
-        if "{" + key + "}" in template and options:
-            template = template.replace(
-                "{" + key + "}",
-                str(random.choice(options))
-            )
-    return template
-
 def _is_question_message(text: str) -> bool:
     normalized = (text or "").strip().lower()
     question_markers = ["?", "γιατι", "γιατί", "πως", "πώς", "τι σημαίνει", "τι σημαινει", "δεν καταλαβα", "δεν καταλαβαίνω", "απορια", "απορία"]
@@ -64,6 +46,61 @@ def _wants_to_start_task(text: str) -> bool:
     ]
     return any(phrase in normalized for phrase in phrases)
 
+def _extract_last_assessment_decision(messages) -> str:
+    for msg in reversed(messages):
+        content = getattr(msg, "content", "") or ""
+        if "[ASSESSMENT:ADVANCE]" in content:
+            return "advance"
+        if "[ASSESSMENT:REPEAT]" in content:
+            return "repeat"
+        if "[ASSESSMENT:SUPPORT]" in content:
+            return "support"
+    return ""
+
+def _chapter_header(lesson):
+    lesson_id = lesson.get("id", "?")
+    lesson_title = lesson.get("title", "Ενότητα")
+    return f"Κεφάλαιο {lesson_id}: {lesson_title}"
+
+def _resolve_placeholders(text: str, replacements: dict) -> str:
+    resolved_text = text or ""
+    for key, value in replacements.items():
+        resolved_text = resolved_text.replace("{" + key + "}", str(value))
+    return resolved_text
+
+def generate_random_task(lesson, difficulty):
+    templates_dict = lesson.get("task_templates", {})
+    templates = templates_dict.get(difficulty, templates_dict.get("easy", []))
+
+    if not templates:
+        return {
+            "task_text": "Γράψε ένα απλό πρόγραμμα Python.",
+            "rendered_criteria": lesson.get("success_criteria", []),
+        }
+
+    template = random.choice(templates)
+    possible_values = lesson.get("possible_values", {})
+    replacements = {}
+
+    for key, options in possible_values.items():
+        if "{" + key + "}" in template and options:
+            replacements[key] = random.choice(options)
+
+    task_text = _resolve_placeholders(template, replacements)
+
+    raw_criteria = lesson.get("success_criteria", [])
+    if isinstance(raw_criteria, list):
+        resolved_criteria = [_resolve_placeholders(str(criteria), replacements) for criteria in raw_criteria]
+    elif isinstance(raw_criteria, str):
+        resolved_criteria = _resolve_placeholders(raw_criteria, replacements)
+    else:
+        resolved_criteria = raw_criteria
+
+    return {
+        "task_text": task_text,
+        "rendered_criteria": resolved_criteria,
+    }
+
 def mentoring_node(state): # Κύρια συνάρτηση που διαχειρίζεται τη λογική του Mentor βάσει του τρέχοντος state
     messages = state.get("messages", [])
     user_input = messages[-1].content if messages else ""
@@ -71,10 +108,16 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     is_first_login = state.get("is_first_login", False)
     profile_checked = state.get("profile_checked", False)
     awaiting_questions = state.get("awaiting_questions", False)
+    event_type = state.get("event_type", "")
     wants_task = _wants_to_start_task(user_input)
+    next_chapter_request = any(token in (user_input or "").lower() for token in ["επόμενο", "επομενο", "next", "προχωράμε", "προχωραμε"])
     task_started = state.get("task_started", False)
     is_correct = state.get("is_correct", False)
     debug_report = state.get("debug_report", "")
+    assessment_decision = state.get("assessment_decision", "")
+    assessment_feedback = state.get("assessment_feedback", "")
+    performance_summary = state.get("performance_summary", "{}")
+    last_assessment_decision = _extract_last_assessment_decision(messages)
     experience = state.get("experience_level", "beginner")
     attempts = state.get("attempts_count", 0)
     
@@ -85,9 +128,18 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
         difficulty = "hard" if experience == "advanced" else "easy"
     
     lesson = pick_lesson(state)
+    chapter_header = _chapter_header(lesson)
     theory = lesson.get("detailed_theory", "")
-    task = generate_random_task(lesson, difficulty)
-    success_criteria = state.get("success_criteria", lesson.get("success_criteria", []))
+    generated_task = state.get("current_task")
+    generated_criteria = state.get("success_criteria")
+
+    if not generated_task or generated_criteria is None:
+        task_payload = generate_random_task(lesson, difficulty)
+        generated_task = task_payload["task_text"]
+        generated_criteria = task_payload["rendered_criteria"]
+
+    task = generated_task
+    success_criteria = generated_criteria
 
     if isinstance(success_criteria, list):
         success_criteria_text = "\n".join([f"- {c}" for c in success_criteria]) if success_criteria else "- Σωστή λύση της άσκησης."
@@ -100,6 +152,10 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     current_context = ""
     if is_first_login and not profile_checked:
         current_context = "Ο μαθητής συνδέεται για πρώτη φορά. Συστήσου και κάνε profile check για να δούμε αν είναι αρχάριος ή προχωρημένος."
+    elif event_type == "no_submission_timeout":
+        current_context = "Ο μαθητής δεν υπέβαλε κώδικα για 40+ δευτερόλεπτα. Δώσε 1 σύντομο παιδαγωγικό hint χωρίς λύση."
+    elif next_chapter_request and last_assessment_decision in {"repeat", "support"}:
+        current_context = "Ο μαθητής ζητά να προχωρήσει, αλλά η τελευταία αξιολόγηση δείχνει ότι χρειάζεται επανάληψη/υποστήριξη. Εξήγησε ευγενικά γιατί και πρότεινε επιλογές."
     elif is_correct:
         current_context = f"Ο μαθητής έλυσε σωστά την άσκηση. Συγχάρηκε τον και ρώτα αν θέλει την επόμενη ενότητα: {lesson.get('title')}."
     elif wants_task:
@@ -113,12 +169,71 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     else:
         current_context = f"Βρισκόμαστε στην ενότητα {lesson.get('title')}. Παρέδωσε τη θεωρία: {theory}. Στο τέλος ρώτα μόνο αν έχει απορίες. ΜΗΝ πεις 'ποια είναι η επόμενη κίνηση σου;'. Χρησιμοποίησε ύφος: {tone}."
 
+    deterministic_content = None
+    if is_first_login and not profile_checked:
+        deterministic_content = (
+            "Καλώς ήρθες! Είμαι εδώ για να σε βοηθήσω να μάθεις Python.\n\n"
+            "Πριν ξεκινήσουμε, έχεις ξαναγράψει κώδικα ή είναι η πρώτη σου επαφή;"
+        )
+    elif event_type == "no_submission_timeout":
+        deterministic_content = (
+            f"{chapter_header}\n\n"
+            "[HINT] Μικρή καθοδήγηση: ξεκίνα σπάζοντας την εκφώνηση σε 2 βήματα και υλοποίησε πρώτα το πιο απλό κομμάτι."
+        )
+    elif next_chapter_request and last_assessment_decision in {"repeat", "support"}:
+        deterministic_content = (
+            "Καταλαβαίνω ότι θέλεις να προχωρήσουμε, αλλά από την τελευταία αξιολόγηση φαίνεται ότι χρειάζεται λίγο ακόμη δουλειά σε αυτή την ενότητα.\n\n"
+            "Μπορούμε να κάνουμε ένα από τα εξής:\n"
+            "1) Σύντομη επανάληψη θεωρίας\n"
+            "2) Μία επιπλέον άσκηση\n"
+            "3) Στοχευμένα hints πάνω στον κώδικά σου\n\n"
+            "[ASSESSMENT:SUPPORT]"
+        )
+    elif is_correct:
+        decision_tag = "[ASSESSMENT:ADVANCE]" if assessment_decision == "advance" else "[ASSESSMENT:REPEAT]"
+        deterministic_content = (
+            f"Μπράβο, η λύση σου είναι σωστή!\n\n"
+            f"{assessment_feedback}\n\n"
+            f"Θες να συνεχίσουμε με την επόμενη ενότητα: {lesson.get('title')};\n\n"
+            f"{decision_tag}"
+        )
+    elif wants_task:
+        deterministic_content = f"{chapter_header}\n\nΤέλεια, πάμε στην άσκηση της ενότητας {lesson.get('title')}:\n\n{task}\n\n[BUTTON:START_TASK]"
+    elif _is_question_message(user_input):
+        deterministic_content = None
+    elif awaiting_questions or (profile_checked and not task_started and not wants_task):
+        deterministic_content = (
+            f"{chapter_header}\n\n{theory}\n\n"
+            "Έχεις κάποια απορία; Αν όχι, γράψε 'προχωράμε'."
+        )
+    elif task_started and not is_correct:
+        decision_tag = "[ASSESSMENT:SUPPORT]" if assessment_decision == "support" else "[ASSESSMENT:REPEAT]"
+        deterministic_content = (
+            "[HINT] Χωρίς να σου δώσω λύση: εστίασε στο πρώτο κριτήριο που δεν ικανοποιείται και έλεγξε βήμα-βήμα τον κώδικά σου.\n\n"
+            f"Τεχνική αναφορά: {debug_report}\n\n"
+            f"Αξιολόγηση: {assessment_feedback}\n\n"
+            f"{decision_tag}"
+        )
+    else:
+        deterministic_content = f"{chapter_header}\n\n{theory}\n\nΈχεις κάποια απορία;"
+
+    if deterministic_content is not None and not _is_question_message(user_input):
+        if wants_task and "[BUTTON:START_TASK]" not in deterministic_content:
+            deterministic_content += "\n\n[BUTTON:START_TASK]"
+        return {
+            "messages": [AIMessage(content=deterministic_content)],
+            "current_task": task,
+            "success_criteria": success_criteria,
+        }
+
     system_prompt = f""" 
     Είσαι ο Mentor, ένας έμπειρος καθηγητής Python. 
+    Ακολουθείς την τελική παιδαγωγική οδηγία του Assessment Agent και δεν προωθείς τον μαθητή αν η αξιολόγηση λέει repeat/support.
     
     ΤΩΡΙΝΗ ΚΑΤΑΣΤΑΣΗ ΜΑΘΗΜΑΤΟΣ: 
     {current_context}
     ΕΠΙΠΕΔΟ ΔΥΣΚΟΛΙΑΣ: {difficulty}
+    ΙΣΤΟΡΙΚΗ ΣΥΝΟΨΗ ΜΑΘΗΤΗ: {performance_summary}
 
     ΚΡΙΤΗΡΙΑ ΕΠΙΤΥΧΙΑΣ ΑΣΚΗΣΗΣ:
     {success_criteria_text}
@@ -147,38 +262,24 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     try: 
         response = chain.invoke({"user_input": user_input})
         generated_content = response.content.strip()
-
-        if is_first_login and not profile_checked:
-            content = (
-                "Καλώς ήρθες! Είμαι εδώ για να σε βοηθήσω να μάθεις Python.\n\n"
-                "Πριν ξεκινήσουμε, έχεις ξαναγράψει κώδικα ή είναι η πρώτη σου επαφή;"
-            )
-        elif is_correct:
-            content = (
-                f"Μπράβο, η λύση σου είναι σωστή!\n\n"
-                f"Θες να συνεχίσουμε με την επόμενη ενότητα: {lesson.get('title')};"
-            )
-        elif wants_task:
-            content = f"Τέλεια, πάμε στην άσκηση της ενότητας {lesson.get('title')}:\n\n{task}\n\n[BUTTON:START_TASK]"
-        elif _is_question_message(user_input):
-            content = generated_content
-            if "[BUTTON:START_TASK]" in content:
-                content = content.replace("[BUTTON:START_TASK]", "").strip()
-        elif awaiting_questions or (profile_checked and not task_started and not wants_task):
-            content = (
-                f"{theory}\n\n"
-                "Έχεις κάποια απορία; Αν όχι, γράψε 'προχωράμε'."
-            )
-        elif task_started and not is_correct:
+        if _is_question_message(user_input):
             content = generated_content
             if "[BUTTON:START_TASK]" in content:
                 content = content.replace("[BUTTON:START_TASK]", "").strip()
         else:
-            content = f"{theory}\n\nΈχεις κάποια απορία;"
+            content = generated_content
 
         if wants_task and "[BUTTON:START_TASK]" not in content:
             content += "\n\n[BUTTON:START_TASK]"
 
-        return {"messages": [AIMessage(content=content)]}
+        return {
+            "messages": [AIMessage(content=content)],
+            "current_task": task,
+            "success_criteria": success_criteria,
+        }
     except Exception:
-        return {"messages": [AIMessage(content="Κάτι με δυσκόλεψε, μπορείς να ξαναδοκιμάσεις;")]}
+        return {
+            "messages": [AIMessage(content="Κάτι με δυσκόλεψε, μπορείς να ξαναδοκιμάσεις;")],
+            "current_task": task,
+            "success_criteria": success_criteria,
+        }

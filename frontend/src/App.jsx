@@ -13,6 +13,8 @@ export default function App() {
 
   const [showEditor, setShowEditor] = useState(false);
   const [startTime, setStartTime] = useState(null);
+  const [taskActive, setTaskActive] = useState(false);
+  const [timeoutHintSent, setTimeoutHintSent] = useState(false);
   const [code, setCode] = useState('# Γράψε τον κώδικά σου εδώ...');
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -26,7 +28,10 @@ export default function App() {
     text
       .replace(startButtonToken, '')
       .replace(legacyStartButtonToken, '')
-      .replace('[ACTIVATE_EDITOR]', '');
+      .replace('[ACTIVATE_EDITOR]', '')
+      .replace('[ASSESSMENT:ADVANCE]', '')
+      .replace('[ASSESSMENT:REPEAT]', '')
+      .replace('[ASSESSMENT:SUPPORT]', '');
 
   const hasStartButtonToken = (text = '') =>
     text.includes(startButtonToken) || text.includes(legacyStartButtonToken);
@@ -82,7 +87,6 @@ export default function App() {
       } else {
         setUser(res.data);
         localStorage.setItem('python_user_data', JSON.stringify(res.data));
-        await bootstrapSession(res.data);
       }
     } catch (err) { 
       setAuthError(err.response?.status === 401 ? "Λάθος όνομα ή κωδικός" : "Σφάλμα σύνδεσης με τον server"); 
@@ -93,6 +97,8 @@ export default function App() {
     setUser(null);
     setShowEditor(false);
     setStartTime(null);
+    setTaskActive(false);
+    setTimeoutHintSent(false);
     localStorage.removeItem('python_user_data');
     setMessages([]);
   };
@@ -100,7 +106,47 @@ export default function App() {
   const handleStartTask = () => {
     setShowEditor(true);
     setStartTime(Date.now());
+    setTaskActive(true);
+    setTimeoutHintSent(false);
   };
+
+  const requestNoSubmissionHint = async () => {
+    if (!user?.id || !taskActive || timeoutHintSent || !startTime) return;
+
+    setLoading(true);
+    setTimeoutHintSent(true);
+    const elapsedSeconds = Math.max(0, (Date.now() - startTime) / 1000);
+
+    try {
+      const res = await axios.post(`http://127.0.0.1:8000/chat/${user.id}`, {
+        message: '__NO_SUBMISSION_40S__',
+        code: '',
+        time_spent: elapsedSeconds,
+        is_task_attempt: false,
+        task_started: true,
+        event_type: 'no_submission_timeout'
+      });
+
+      setMessages(prev => [...prev, { role: 'ai', content: res.data.mentor_response }]);
+    } catch (err) {
+      setMessages(prev => [...prev, { role: 'ai', content: 'Δεν μπόρεσα να στείλω αυτόματο hint αυτή τη στιγμή.' }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!taskActive || timeoutHintSent || !startTime) return;
+
+    const elapsed = (Date.now() - startTime) / 1000;
+    const remainingMs = Math.max(0, (40 - elapsed) * 1000);
+
+    const timerId = window.setTimeout(() => {
+      requestNoSubmissionHint();
+    }, remainingMs);
+
+    return () => window.clearTimeout(timerId);
+  }, [taskActive, timeoutHintSent, startTime]);
 
   const sendChatMessage = async (overrideMessage = null) => {
     const textToSend = overrideMessage || chatInput;
@@ -115,7 +161,8 @@ export default function App() {
       const res = await axios.post(`http://127.0.0.1:8000/chat/${user.id}`, {
         message: textToSend,
         code: "",
-        time_spent: 0
+        time_spent: 0,
+        task_started: taskActive
       });
       setMessages(prev => [...prev, { role: 'ai', content: res.data.mentor_response }]);
     } catch (err) {
@@ -125,6 +172,7 @@ export default function App() {
 
   const handleRunCode = async () => {
     setLoading(true);
+    setTimeoutHintSent(true);
     const timeSpent = startTime ? (Date.now() - startTime) / 1000 : 0;
     const codeToSubmit = typeof code === 'string' ? code : '';
     const submissionMessage = codeToSubmit.trim()
@@ -138,7 +186,9 @@ export default function App() {
         message: "CODE_SUBMISSION",
         code: codeToSubmit,
         time_spent: timeSpent,
-        is_task_attempt: true
+        is_task_attempt: true,
+        task_started: true,
+        event_type: 'code_submission'
       });
 
       const mentorResponse = res.data?.mentor_response || "Δεν έλαβα απάντηση από τον Mentor.";
@@ -150,6 +200,7 @@ export default function App() {
       // Ο χρονομετρητής σταματά μόνο όταν υπάρξει σωστή λύση ή ολοκλήρωση μαθημάτων.
       if (isCorrect || courseCompleted) {
         setStartTime(null);
+        setTaskActive(false);
       }
     } catch (err) {
       console.error(err);

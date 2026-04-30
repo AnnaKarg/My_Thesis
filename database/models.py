@@ -9,6 +9,14 @@ class User(Base): # Ορίζουμε το μοντέλο User που αντιπ�
     experience_level = Column(String, default="beginner")
     current_lesson_id = Column(Integer, default=1)
     profile_checked = Column(Boolean, default=False)
+    active_task_lesson_id = Column(Integer, default=0)
+    active_task_text = Column(Text, default="")
+    active_success_criteria = Column(Text, default="[]")
+    frequent_error_categories = Column(Text, default="[]")
+    avg_time_spent = Column(Float, default=0.0)
+    solved_tasks = Column(Integer, default=0)
+    understanding_level = Column(String, default="developing")
+    last_assessment_decision = Column(String, default="repeat")
 
 class ChatHistory(Base): # Ορίζουμε το μοντέλο ChatHistory που αντιπροσωπεύει το ιστορικό συνομιλιών των χρηστών με τον Mentor
     __tablename__ = "chat_histories"

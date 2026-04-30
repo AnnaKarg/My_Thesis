@@ -16,3 +16,19 @@ async def init_db(): # Συνάρτηση για την αρχικοποίηση
         columns = [row[1] for row in result.fetchall()]
         if "profile_checked" not in columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN profile_checked BOOLEAN NOT NULL DEFAULT 0"))
+        if "active_task_lesson_id" not in columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN active_task_lesson_id INTEGER NOT NULL DEFAULT 0"))
+        if "active_task_text" not in columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN active_task_text TEXT NOT NULL DEFAULT ''"))
+        if "active_success_criteria" not in columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN active_success_criteria TEXT NOT NULL DEFAULT '[]'"))
+        if "frequent_error_categories" not in columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN frequent_error_categories TEXT NOT NULL DEFAULT '[]'"))
+        if "avg_time_spent" not in columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN avg_time_spent FLOAT NOT NULL DEFAULT 0.0"))
+        if "solved_tasks" not in columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN solved_tasks INTEGER NOT NULL DEFAULT 0"))
+        if "understanding_level" not in columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN understanding_level VARCHAR NOT NULL DEFAULT 'developing'"))
+        if "last_assessment_decision" not in columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN last_assessment_decision VARCHAR NOT NULL DEFAULT 'repeat'"))
