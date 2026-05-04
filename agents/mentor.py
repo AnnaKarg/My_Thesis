@@ -41,7 +41,9 @@ def _is_question_message(text: str) -> bool:
         "τι σημαίνει", "τι σημαινει",
         "εξηγε", "εξήγε", "εξήγησε", "εξηγησε",
         "δεν καταλαβα", "δεν καταλαβαίνω",
-        "απορια", "απορία", "δεν ξερω", "δεν ξέρω"
+        "απορια", "απορία", "δεν ξερω", "δεν ξέρω",
+        "παραδειγμα", "παράδειγμα", "δωσε μου", "δώσε μου",
+        "δείξε μου", "δειξε μου", "μπορεις να εξηγησεις", "μπορείς να εξηγήσεις"
     ]
     return any(marker in normalized for marker in question_markers)
 
@@ -56,7 +58,8 @@ def _wants_to_start_task(text: str) -> bool:
         "δώσε άσκηση", "δωσε ασκηση", "θέλω άσκηση", "θελω ασκηση",
         "ας επαναλάβουμε", "ας επαναλαβουμε", "επαναλάβουμε", "επαναλαβουμε",
         "ξανά την άσκηση", "ξανα την ασκηση", "πάλι", "παλι",
-        "επανάληψη", "επαναληψη", "δοκιμάσω ξανά", "δοκιμασω ξανα"
+        "επανάληψη", "επαναληψη", "δοκιμάσω ξανά", "δοκιμασω ξανα",
+        "proxvrame", "proxwrame", "prochvrame", "proksorame"
     ]
     return any(phrase in normalized for phrase in phrases)
 
@@ -189,6 +192,10 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     event_type = state.get("event_type", "")
     wants_task = _wants_to_start_task(user_input)
     next_chapter_request = any(token in (user_input or "").lower() for token in ["επόμενο", "επομενο", "next", "προχωράμε", "προχωραμε"])
+    # Ανίχνευση επιλογής από το menu υποστήριξης (1/2/3)
+    menu_choice = None
+    if (user_input or "").strip() in {"1", "2", "3"}:
+        menu_choice = (user_input or "").strip()
     task_started = state.get("task_started", False)
     is_correct = state.get("is_correct", False)
     debug_report = state.get("debug_report", "")
@@ -241,7 +248,13 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             current_context = "Ο μαθητής δεν υπέβαλε κώδικα για 40+ δευτερόλεπτα. Δώσε 1 σύντομο παιδαγωγικό hint χωρίς λύση."
         else:
             current_context = f"Ο μαθητής δουλεύει στην άσκηση της ενότητας {lesson.get('title')}. Υπενθύμισέ του σύντομα την εκφώνηση χωρίς να δώσεις hint."
-    elif next_chapter_request and last_assessment_decision in {"repeat", "support"}:
+    elif menu_choice == "1":
+        current_context = f"Ο μαθητής επέλεξε επανάληψη θεωρίας. Παρουσίασε ξανά τη θεωρία της ενότητας {lesson.get('title')} σύντομα."
+    elif menu_choice == "2":
+        current_context = f"Ο μαθητής επέλεξε νέα άσκηση για την ενότητα {lesson.get('title')}."
+    elif menu_choice == "3":
+        current_context = f"Ο μαθητής ζητά hints. Debug Report: {debug_report}. Δώσε στοχευμένο hint."
+    elif next_chapter_request and task_started and last_assessment_decision in {"repeat", "support"}:
         current_context = "Ο μαθητής ζητά να προχωρήσει, αλλά η τελευταία αξιολόγηση δείχνει ότι χρειάζεται επανάληψη/υποστήριξη. Εξήγησε ευγενικά γιατί και πρότεινε επιλογές."
     elif is_correct:
         current_context = f"Ο μαθητής έλυσε σωστά την άσκηση. Συγχάρηκε τον και ρώτα αν θέλει την επόμενη ενότητα: {lesson.get('title')}."
@@ -275,7 +288,22 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 "[HINT] Πάρε το ήσυχα! Ξεκίνα σπάζοντας την εκφώνηση σε μικρά βήματα και υλοποίησε πρώτα το πιο απλό κομμάτι."
             )
         # Για expert χρήστες: το LLM χειρίζεται με updated current_context (χωρίς hint)
-    elif next_chapter_request and last_assessment_decision in {"repeat", "support"}:
+    elif menu_choice == "1":
+        deterministic_content = (
+            f"Ας ξαναδούμε τη θεωρία μαζί!\n\n"
+            f"{chapter_header}\n\n{theory}\n\n"
+            f"Έχεις ερωτήσεις; Αλλιώς γράψε 'προχωράμε' για να δοκιμάσεις την άσκηση!"
+        )
+    elif menu_choice == "2":
+        deterministic_content = (
+            f"Τέλεια! Να μια νέα άσκηση για την ενότητα **{lesson.get('title')}**:\n\n{task}\n\n[BUTTON:START_TASK]"
+        )
+    elif menu_choice == "3":
+        hint_text = _generate_targeted_hint(debug_report, difficulty, assessment_feedback)
+        deterministic_content = (
+            f"Κοίτα το λάθος πιο προσεκτικά:\n\n{hint_text}\n\nΔοκίμασε να διορθώσεις αυτό το σημείο και υποβάλε ξανά!\n\n[ASSESSMENT:SUPPORT]"
+        )
+    elif next_chapter_request and task_started and last_assessment_decision in {"repeat", "support"}:
         deterministic_content = (
             "Καταλαβαίνω ότι θέλεις να προχωρήσουμε, αλλά από την τελευταία αξιολόγηση φαίνεται ότι χρειάζεται λίγο ακόμη δουλειά σε αυτή την ενότητα.\n\n"
             "Μπορούμε να κάνουμε ένα από τα εξής:\n"

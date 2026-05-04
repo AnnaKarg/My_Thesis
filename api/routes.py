@@ -85,6 +85,16 @@ def _infer_awaiting_questions(db_history, profile_checked: bool, task_started: b
 def _count_hints(db_history) -> int:
     return sum(1 for h in db_history if h.role == "ai" and "[HINT]" in (h.content or ""))
 
+def _has_recent_attempts(db_history) -> bool:
+    """Επιστρέφει True μόνο αν υπάρχουν υποβολές κώδικα ΜΕΤΑ την τελευταία μετάβαση μαθήματος (ADVANCE).
+    Αποτρέπει το task_started=True να μεταφέρεται από προηγούμενα μαθήματα."""
+    for h in reversed(db_history):
+        if h.role == "ai" and "[ASSESSMENT:ADVANCE]" in (h.content or ""):
+            return False  # Βρήκαμε ADVANCE → κανένα attempt μετά
+        if h.role == "human" and (h.attempts_count or 0) > 0:
+            return True
+    return False
+
 def _should_reset_for_next_lesson(db_history, user_message: str) -> bool:
     normalized = (user_message or "").strip().lower()
     affirmative = any(word in normalized for word in ["ναι", "ναι.", "ναι!", "προχωράμε", "προχωραμε", "προχωράμε.", "προχωραμε.", "πάμε", "παμε", "next", "επόμενο", "επομενο"])
@@ -251,7 +261,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         formatted_history.append(msg_class(content=h.content))
     formatted_history.append(HumanMessage(content=submission_message))
 
-    task_started = request.task_started or any((h.attempts_count or 0) > 0 for h in db_history) or is_task_attempt_effective
+    task_started = request.task_started or _has_recent_attempts(db_history) or is_task_attempt_effective
     awaiting_questions = _infer_awaiting_questions(db_history, user.profile_checked, task_started)
     hint_count = _count_hints(db_history)
     reset_for_next_lesson = _should_reset_for_next_lesson(db_history, request.message)
