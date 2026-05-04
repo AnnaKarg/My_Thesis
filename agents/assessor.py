@@ -88,7 +88,8 @@ def _extract_expected_from_task(current_task: str):
     if "string" in task.lower() or "κείμενο" in task.lower():
         expectations["string_names"].extend(name_matches[:1])
     if "δεκαδ" in task.lower() or "αριθμ" in task.lower() or "number" in task.lower():
-        expectations["numeric_names"].extend(name_matches[1:] if len(name_matches) > 1 else name_matches)
+        already_string = set(expectations["string_names"])
+        expectations["numeric_names"].extend([n for n in name_matches if n not in already_string])
 
     return expectations
 

@@ -227,15 +227,12 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             "course_completed": True
         }
 
-    # 1. Profile Check Logic (Beginner vs Advanced)
+    # 1. Profile Check Logic (Beginner vs Expert)
     is_first_login = len(db_history) == 0
-    if is_first_login:
+    if not user.profile_checked:
         msg = request.message.lower()
-        if any(word in msg for word in ["όχι", "ποτέ", "πρώτη φορά", "δεν ξέρω", "αρχάριος", "δεν έχω ξαναγράψει"]):
-            user.experience_level = "beginner"
-            user.profile_checked = True
-        elif any(word in msg for word in ["ναι", "έχω ξαναγράψει", "έχω ξανά γράψει", "γνωρίζω", "προχωρημένος"]):
-            user.experience_level = "advanced"
+        if any(word in msg for word in ["ναι", "έχω ξαναγράψει", "έχω ξανά γράψει", "γνωρίζω", "προχωρημένος", "ξέρω", "έχω γράψει", "yes", "expert"]):
+            user.experience_level = "expert"
             user.profile_checked = True
         else:
             user.experience_level = "beginner"
@@ -269,7 +266,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     idx = max(0, min(user.current_lesson_id - 1, len(lesson_titles) - 1))
     current_lesson = lessons_content.get("lessons", [])[idx] if lessons_content.get("lessons") else {}
     lesson_name = lesson_titles[idx]
-    task_difficulty = "easy" if current_total_attempts >= 3 else ("hard" if user.experience_level == "advanced" else "easy")
+    task_difficulty = "easy" if current_total_attempts >= 3 else ("hard" if user.experience_level == "expert" else "easy")
     active_task_matches_lesson = (
         user.active_task_lesson_id == user.current_lesson_id
         and bool((user.active_task_text or "").strip())

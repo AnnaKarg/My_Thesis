@@ -30,12 +30,12 @@
       "title": "Τύποι Δεδομένων (Strings & Numbers)",
       "detailed_theory": "Τα Strings μπαίνουν σε εισαγωγικά, ενώ οι αριθμοί (Integers/Floats) όχι.",
       "task_templates": {
-        "easy": ["Όρισε μια μεταβλητή {name} ως string και μια μεταβλητή {num_var} ως δεκαδικό."],
+        "easy": ["Όρισε μια μεταβλητή {name} ως string και μια μεταβλητή {num_name} ως δεκαδικό."],
         "hard": ["Δημιούργησε μια μεταβλητή που να υπολογίζει το αποτέλεσμα της πράξης ({n1} + {n2}) * 2 και αποθήκευσέ το."]
       },
       "possible_values": {
         "name": ["user_status", "category"],
-        "num_var": [10.5, 99.9],
+        "num_name": ["price", "rating"],
         "n1": [5, 10], "n2": [2, 4]
       },
       "success_criteria": [
