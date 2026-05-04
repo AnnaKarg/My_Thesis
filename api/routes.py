@@ -231,10 +231,10 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     is_first_login = len(db_history) == 0
     if is_first_login:
         msg = request.message.lower()
-        if any(word in msg for word in ["όχι", "ποτέ", "πρώτη φορά", "δεν ξέρω", "αρχάριος"]):
+        if any(word in msg for word in ["όχι", "ποτέ", "πρώτη φορά", "δεν ξέρω", "αρχάριος", "δεν έχω ξαναγράψει"]):
             user.experience_level = "beginner"
             user.profile_checked = True
-        elif any(word in msg for word in ["ναι", "έχω ξαναγράψει", "γνωρίζω", "προχωρημένος"]):
+        elif any(word in msg for word in ["ναι", "έχω ξαναγράψει", "έχω ξανά γράψει", "γνωρίζω", "προχωρημένος"]):
             user.experience_level = "advanced"
             user.profile_checked = True
         else:
