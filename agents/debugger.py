@@ -1,7 +1,18 @@
 import ast # Για deterministic ανάλυση σύνταξης και λογικών δομών
 import builtins # Για έλεγχο built-in ονομάτων
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BUILTIN_NAMES = set(dir(builtins))
+
+DEBUGGER_SYSTEM_PROMPT = (
+    "Είσαι ο Debugging Agent, ειδικευμένος στη σημασιολογική ανάλυση κώδικα Python μαθητών. "
+    "Εντοπίζεις λογικές αποκλίσεις από τα ζητούμενα που δεν φαίνονται σε στατική ανάλυση."
+)
+
+llm_debugger = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0)
 
 def _criteria_text(success_criteria) -> str:
     if isinstance(success_criteria, list):
@@ -125,9 +136,34 @@ def _deterministic_findings(tree, success_criteria):
 
     return findings, sorted(categories)
 
+def _semantic_analysis(student_code: str, success_criteria, current_task: str) -> str:
+    """LLM semantic analysis: εντοπίζει λογικά λάθη που δεν φαίνονται σε AST.
+    Καλείται μόνο όταν δεν υπάρχουν structural errors — αποφεύγει διπλό έλεγχο."""
+    if not current_task or not student_code.strip():
+        return ""
+    criteria_text = _criteria_text(success_criteria)
+    prompt = (
+        f"{DEBUGGER_SYSTEM_PROMPT}\n\n"
+        f"Εκφώνηση: {current_task}\n"
+        f"Κριτήρια: {criteria_text}\n"
+        f"Κώδικας μαθητή:\n{student_code}\n\n"
+        f"Ελέγξε αν ο κώδικας ικανοποιεί τα κριτήρια σημασιολογικά. "
+        f"Αν βρεις πρόβλημα, γράψε 1 σύντομη πρόταση. Αν είναι σωστός, γράψε μόνο: OK\n\nΑνάλυση:"
+    )
+    try:
+        result = llm_debugger.invoke(prompt)
+        analysis = result.content.strip()
+        if not analysis or analysis.strip().upper().startswith("OK"):
+            return ""
+        return analysis
+    except Exception:
+        return ""
+
+
 def debugging_node(state):# Κύρια λογική του Debugger Agent
     student_code = state.get("student_code", "")
     success_criteria = state.get("success_criteria", "")
+    current_task = state.get("current_task", "")
 
     if not student_code.strip():
         return {"debug_report": "[DEBUG: EMPTY] Δεν εντοπίστηκε κώδικας προς ανάλυση."}
@@ -150,6 +186,13 @@ def debugging_node(state):# Κύρια λογική του Debugger Agent
                 f"[DEBUG:CATEGORIES] {categories_text}\n"
                 f"{technical}"
             )
+        }
+
+    # Structural analysis passed → LLM semantic analysis για λογικά λάθη
+    semantic = _semantic_analysis(student_code, success_criteria, current_task)
+    if semantic:
+        return {
+            "debug_report": f"[DEBUG: SEMANTIC] {semantic}"
         }
 
     return {

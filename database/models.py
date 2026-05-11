@@ -21,7 +21,7 @@ class User(Base): # Ορίζουμε το μοντέλο User που αντιπ�
 class ChatHistory(Base): # Ορίζουμε το μοντέλο ChatHistory που αντιπροσωπεύει το ιστορικό συνομιλιών των χρηστών με τον Mentor
     __tablename__ = "chat_histories"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     role = Column(String)
     content = Column(Text)
     time_spent = Column(Float, default=0.0) 

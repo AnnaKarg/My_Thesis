@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException # Εισάγει τα απαραίτητα components από το FastAPI
 import asyncio # Για ασύγχρονες λειτουργίες
 import json # Για φόρτωση των μαθημάτων από το αρχείο JSON
+import re
 from collections import Counter
 from pathlib import Path # Για να βρει το μονοπάτι του αρχείου JSON με τα μαθήματα
 from sqlalchemy.ext.asyncio import AsyncSession # Για ασύγχρονη διαχείριση της βάσης δεδομένων
@@ -11,7 +12,7 @@ from pydantic import BaseModel # Για να ορίσει τα σχήματα τ
 from passlib.context import CryptContext # Για να χειριστεί την κρυπτογράφηση των κωδικών
 from langchain_core.messages import HumanMessage, AIMessage  # Για να δημιουργήσει μηνύματα για το μοντέλο γλώσσας
 from core.app import app as langgraph_app # Για να καλέσει το LangGraph app που τρέχει τους agents
-from agents.mentor import generate_random_task
+from agents.mentor import generate_random_task, classify_profile_async, generate_session_recap_async
 
 router = APIRouter() # Δημιουργεί ένα router για να ορίσει τα API endpoints που σχετίζονται με το chat και την αυθεντικοποίηση
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto") # Ορίζει το context για την κρυπτογράφηση των κωδικών με bcrypt
@@ -76,7 +77,7 @@ def _infer_awaiting_questions(db_history, profile_checked: bool, task_started: b
         text = (h.content or "").lower()
         if "[button:start_task]" in text:
             return False
-        if "έχεις κάποια απορία" in text:
+        if "[awaiting_questions]" in text:
             return True
         return False
 
@@ -90,7 +91,7 @@ def _has_recent_attempts(db_history) -> bool:
     Αποτρέπει το task_started=True να μεταφέρεται από προηγούμενα μαθήματα."""
     for h in reversed(db_history):
         if h.role == "ai" and "[ASSESSMENT:ADVANCE]" in (h.content or ""):
-            return False  # Βρήκαμε ADVANCE → κανένα attempt μετά
+            return False 
         if h.role == "human" and (h.attempts_count or 0) > 0:
             return True
     return False
@@ -203,8 +204,23 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     )
     db_history = history_query.scalars().all()
 
+    if db_history:
+        lesson_titles = ["Εισαγωγή και Μεταβλητές", "Τύποι Δεδομένων", "Δομές Ελέγχου", "Λίστες", "Επαναλήψεις", "Συναρτήσεις"]
+        idx = max(0, min(user.current_lesson_id - 1, len(lesson_titles) - 1))
+        lesson_name = lesson_titles[idx]
+
+        history_pairs = [(h.role, h.content) for h in db_history]
+        recap = await generate_session_recap_async(history_pairs, lesson_name, user.username)
+
+        if recap:
+            welcome_message = f"Καλώς ήρθες ξανά, {user.username}!\n\n{recap}\n\nΘέλεις να συνεχίσουμε από εκεί που σταματήσαμε;"
+        else:
+            welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
+    else:
+        welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
+
     return {
-        "message": _build_welcome_message(user.username, db_history, user.current_lesson_id),
+        "message": welcome_message,
         "current_lesson_id": user.current_lesson_id,
         "profile_checked": user.profile_checked
     }
@@ -237,16 +253,11 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             "course_completed": True
         }
 
-    # 1. Profile Check Logic (Beginner vs Expert)
+    # 1. Profile Check Logic (Beginner vs Expert) — LLM-based classification
     is_first_login = len(db_history) == 0
     if not user.profile_checked:
-        msg = request.message.lower()
-        if any(word in msg for word in ["ναι", "έχω ξαναγράψει", "έχω ξανά γράψει", "γνωρίζω", "προχωρημένος", "ξέρω", "έχω γράψει", "yes", "expert"]):
-            user.experience_level = "expert"
-            user.profile_checked = True
-        else:
-            user.experience_level = "beginner"
-            user.profile_checked = True
+        user.experience_level = await classify_profile_async(request.message)
+        user.profile_checked = True
 
     # 2. Attempts Tracking
     has_current_submission = bool(request.code.strip()) or "CODE_SUBMISSION" in request.message.upper()
@@ -266,17 +277,28 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     hint_count = _count_hints(db_history)
     reset_for_next_lesson = _should_reset_for_next_lesson(db_history, request.message)
 
+    effective_event_type = request.event_type
     if reset_for_next_lesson:
         task_started = False
         awaiting_questions = False
         hint_count = 0
         current_total_attempts = 0
+        effective_event_type = "lesson_advanced"  # Ενημερώνει τον Mentor ότι ο χρήστης μόλις πέρασε στο νέο μάθημα
     
     lesson_titles = ["Variables", "Data Types", "Conditions", "Lists", "Loops", "Functions"]
     idx = max(0, min(user.current_lesson_id - 1, len(lesson_titles) - 1))
     current_lesson = lessons_content.get("lessons", [])[idx] if lessons_content.get("lessons") else {}
     lesson_name = lesson_titles[idx]
-    task_difficulty = "easy" if current_total_attempts >= 3 else ("hard" if user.experience_level == "expert" else "easy")
+    # Adaptive δυσκολία: expert ή beginner που λύνει συνεχώς γρήγορα → hard ασκήσεις
+    fast_solver = (
+        int(user.solved_tasks or 0) >= 3 and
+        float(user.avg_time_spent or 0.0) < 30.0  # μέσος χρόνος < 30 δευτ. ανά άσκηση
+    )
+    task_difficulty = (
+        "easy" if current_total_attempts >= 3
+        else "hard" if (user.experience_level == "expert" or fast_solver)
+        else "easy"
+    )
     active_task_matches_lesson = (
         user.active_task_lesson_id == user.current_lesson_id
         and bool((user.active_task_text or "").strip())
@@ -311,13 +333,13 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         "experience_level": user.experience_level,
         "attempts_count": current_total_attempts,
         "success_criteria": resolved_success_criteria,
-        "debug_report": "" if reset_for_next_lesson else "",
+        "debug_report": "",
         "is_correct": False,
         "time_spent": 0.0 if reset_for_next_lesson else (request.time_spent if is_task_attempt_effective else 0.0),
         "task_started": task_started,
-        "event_type": "" if reset_for_next_lesson else request.event_type,
+        "event_type": effective_event_type,
         "hint_count": hint_count,
-        "assessment_feedback": "" if reset_for_next_lesson else "",
+        "assessment_feedback": "",
         "assessment_score": 0,
         "assessment_decision": "" if reset_for_next_lesson else (user.last_assessment_decision or "repeat"),
         "understanding_level": user.understanding_level or "developing",
@@ -331,7 +353,8 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             langgraph_app.ainvoke(state, config={"recursion_limit": 15}),
             timeout=60 
         )
-        ai_response = output["messages"][-1].content
+        raw_response = output["messages"][-1].content
+        ai_response = re.sub(r'\n?\[(HINT|AWAITING_QUESTIONS)\]', '', raw_response).strip()
         assessment_score = int(output.get("assessment_score", 0) or 0)
         assessment_decision = output.get("assessment_decision", "repeat")
         understanding_level = output.get("understanding_level", "developing")
@@ -357,8 +380,12 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     )
     db.add(new_human)
 
-    user.last_assessment_decision = assessment_decision
-    user.understanding_level = understanding_level
+    # Αποθηκεύουμε assessment αποτελέσματα ΜΟΝΟ όταν έτρεξε ο assessor (κώδικας υποβλήθηκε).
+    # Αν δεν υπήρχε υποβολή κώδικα, ο assessor δεν τρέχει και το default "repeat" θα αντικαθιστούσε
+    # λανθασμένα μια ήδη αποθηκευμένη "advance" ή "support" απόφαση.
+    if is_task_attempt_effective:
+        user.last_assessment_decision = assessment_decision
+        user.understanding_level = understanding_level
 
     if not is_correct_final:
         categories = _extract_debug_categories(debug_report_output)
@@ -372,6 +399,13 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         user.avg_time_spent = ((avg_so_far * solved_so_far) + max(request.time_spent, 0.0)) / new_solved
         user.solved_tasks = new_solved
     
+    # Σωστή λύση αλλά assessment_decision != "advance" (support/repeat):
+    # μηδενίζουμε active_task ώστε η επόμενη wants_task να δώσει νέα παραλλαγή άσκησης
+    if is_task_attempt_effective and not is_correct_final and bool(output.get("is_correct", False)):
+        user.active_task_lesson_id = 0
+        user.active_task_text = ""
+        user.active_success_criteria = "[]"
+
     if is_correct_final:
         if TOTAL_LESSONS and user.current_lesson_id >= TOTAL_LESSONS:
             user.current_lesson_id = TOTAL_LESSONS + 1

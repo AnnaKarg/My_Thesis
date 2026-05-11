@@ -1,6 +1,10 @@
 import ast # Για deterministic έλεγχο κριτηρίων
 import json
 import re
+from langchain_groq import ChatGroq
+from dotenv import load_dotenv
+
+load_dotenv()
 
 ASSESSOR_SYSTEM_PROMPT = (
     "Είσαι ο Assessment Agent (Εξεταστής). "
@@ -8,8 +12,49 @@ ASSESSOR_SYSTEM_PROMPT = (
     "Μηδενική ανοχή σε νοηματικά λάθη τύπων δεδομένων. Το περιεχόμενο χωρίς τη σωστή μορφή θεωρείται λανθασμένο"
 )
 
+llm_assessor = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0.1)
+
+
+def _generate_assessment_feedback(
+    is_correct: bool,
+    raw_findings: str,
+    current_task: str,
+    understanding_level: str,
+) -> str:
+    """Παράγει personalized feedback με LLM, grounded στα deterministic ευρήματα.
+    Η pass/fail απόφαση παραμένει πάντα deterministic — μόνο η διατύπωση είναι LLM."""
+    if is_correct:
+        prompt = (
+            f"{ASSESSOR_SYSTEM_PROMPT}\n\n"
+            f"Εκφώνηση: {current_task}\n"
+            f"Αποτέλεσμα: PASS — Όλα τα κριτήρια ικανοποιήθηκαν.\n\n"
+            f"Γράψε 1 σύντομη πρόταση που επιβεβαιώνει ότι η λύση είναι σωστή. "
+            f"Ύφος: παιδαγωγικό, φιλικό.\n\nFeedback:"
+        )
+    else:
+        prompt = (
+            f"{ASSESSOR_SYSTEM_PROMPT}\n\n"
+            f"Εκφώνηση: {current_task}\n"
+            f"Τεχνικά ευρήματα: {raw_findings}\n"
+            f"Επίπεδο κατανόησης: {understanding_level}\n\n"
+            f"Γράψε 1-2 προτάσεις που εξηγούν τι χρειάζεται διόρθωση. "
+            f"ΜΗΝ δώσεις τη λύση. Ύφος: παιδαγωγικό, φιλικό.\n\nFeedback:"
+        )
+    try:
+        result = llm_assessor.invoke(prompt)
+        return result.content.strip()
+    except Exception:
+        return raw_findings
+
 NUMERIC_TARGET_NAMES = {
     "age", "score", "year", "num_var", "n1", "n2", "num", "limit", "temp", "speed", "numbers"
+}
+
+# Ονόματα μεταβλητών που σημασιολογικά πρέπει να έχουν string τιμή
+STRING_TARGET_NAMES = {
+    "username", "email", "city", "country", "name", "category",
+    "status", "user_status", "label", "message", "description",
+    "title", "first_name", "last_name", "address", "phone"
 }
 
 def _safe_literal_eval(node):
@@ -155,6 +200,32 @@ def _type_mismatch_detected(student_code: str, success_criteria, current_lesson:
 
     return bool(violating_vars), sorted(set(violating_vars))
 
+
+def _string_mismatch_detected(student_code: str, current_lesson: str):
+    """Ελέγχει αν γνωστά string-type ονόματα μεταβλητών έχουν αναθεθεί μη-string τιμή.
+    π.χ. email = 12  →  λάθος (πρέπει να είναι string)"""
+    if current_lesson not in {"Variables", "Data Types"}:
+        return False, []
+
+    try:
+        tree = ast.parse(student_code)
+    except SyntaxError:
+        return False, []
+
+    violating_vars = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        value = _safe_literal_eval(node.value)
+        if value is None or isinstance(value, str):
+            continue  # string τιμή ή σύνθετη έκφραση: δεν ελέγχουμε
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id in STRING_TARGET_NAMES:
+                violating_vars.append(target.id)
+
+    return bool(violating_vars), sorted(set(violating_vars))
+
+
 def _strict_task_matching(student_code: str, current_task: str):
     if not current_task:
         return True, []
@@ -225,8 +296,6 @@ def _understanding_level(score, attempts, hint_count, is_correct):
     return "developing"
 
 def assessment_node(state):# Κύρια λογική του Assessment Agent
-    _ = ASSESSOR_SYSTEM_PROMPT
-
     debug_report = state.get("debug_report", "")
     student_code = state.get("student_code", "")
     success_criteria = state.get("success_criteria", "Ο κώδικας πρέπει να είναι λειτουργικός.")
@@ -252,27 +321,47 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
         type_mismatch, violating_vars = _type_mismatch_detected(student_code, success_criteria, current_lesson)
         if type_mismatch:
             decision = "support" if attempts_count >= 2 or hint_count >= 1 else "repeat"
+            ulevel = _understanding_level(0, attempts_count, hint_count, False)
+            raw = f"Οι μεταβλητές {', '.join(violating_vars)} έχουν αριθμητική τιμή γραμμένη ως string (με εισαγωγικά)."
+            feedback = _generate_assessment_feedback(False, raw, current_task, ulevel)
             return {
                 "is_correct": False,
-                "assessment_feedback": (
-                    "[TYPE_ERROR] Αποτυχία λόγω λάθους τύπου δεδομένων: "
-                    f"οι μεταβλητές {', '.join(violating_vars)} έχουν αριθμητική τιμή γραμμένη ως string με εισαγωγικά."
-                ),
+                "assessment_feedback": f"[TYPE_ERROR] {feedback}",
                 "assessment_score": 0,
                 "assessment_decision": decision,
-                "understanding_level": _understanding_level(0, attempts_count, hint_count, False),
+                "understanding_level": ulevel,
+                "result": "FAIL"
+            }
+
+        # Έλεγχος αντίστροφου τύπου: string-type μεταβλητές που πήραν αριθμητική τιμή
+        # π.χ. email = 12, country = 99  →  σφάλμα τύπου
+        str_mismatch, str_violating = _string_mismatch_detected(student_code, current_lesson)
+        if str_mismatch:
+            decision = "support" if attempts_count >= 2 or hint_count >= 1 else "repeat"
+            ulevel = _understanding_level(0, attempts_count, hint_count, False)
+            raw = f"Οι μεταβλητές {', '.join(str_violating)} πρέπει να έχουν τιμή τύπου string (μέσα σε εισαγωγικά)."
+            feedback = _generate_assessment_feedback(False, raw, current_task, ulevel)
+            return {
+                "is_correct": False,
+                "assessment_feedback": f"[TYPE_ERROR] {feedback}",
+                "assessment_score": 0,
+                "assessment_decision": decision,
+                "understanding_level": ulevel,
                 "result": "FAIL"
             }
 
         strict_ok, strict_failures = _strict_task_matching(student_code, current_task)
         if not strict_ok:
             decision = "support" if attempts_count >= 2 or hint_count >= 1 else "repeat"
+            ulevel = _understanding_level(0, attempts_count, hint_count, False)
+            raw = " | ".join(strict_failures)
+            feedback = _generate_assessment_feedback(False, raw, current_task, ulevel)
             return {
                 "is_correct": False,
-                "assessment_feedback": "[STRICT_MATCH_FAIL] " + " | ".join(strict_failures),
+                "assessment_feedback": f"[STRICT_MATCH_FAIL] {feedback}",
                 "assessment_score": 0,
                 "assessment_decision": decision,
-                "understanding_level": _understanding_level(0, attempts_count, hint_count, False),
+                "understanding_level": ulevel,
                 "result": "FAIL"
             }
 
@@ -286,38 +375,23 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
 
         # Απόλυτη ακρίβεια στα criteria: PASS μόνο όταν όλα είναι True.
         is_correct = (total > 0 and passed == total)
-        if is_correct and performance_summary:
-            total_attempts = int(performance_summary.get("total_attempts", 0) or 0)
-            avg_time = float(performance_summary.get("avg_time_spent", 0.0) or 0.0)
-            repeated_errors = performance_summary.get("frequent_error_categories", []) or []
-            if total_attempts >= 4 or avg_time >= 60 or len(repeated_errors) >= 2:
-                decision = "support"
-                feedback = (
-                    "Η λύση είναι σωστή, αλλά το ιστορικό δείχνει ότι ο μαθητής δυσκολεύτηκε σημαντικά. "
-                    "Προτείνεται επανάληψη παρόμοιας άσκησης πριν την προαγωγή."
-                )
-                return {
-                    "is_correct": True,
-                    "assessment_feedback": feedback,
-                    "assessment_score": score,
-                    "assessment_decision": decision,
-                    "understanding_level": _understanding_level(score, attempts_count, hint_count, True),
-                    "result": "PASS"
-                }
+
+        ulevel = _understanding_level(score, attempts_count, hint_count, is_correct)
         if is_correct:
             decision = "advance"
-            feedback = "Ικανοποιούνται επαρκώς τα ακαδημαϊκά κριτήρια."
+            raw = "Όλα τα κριτήρια ικανοποιούνται πλήρως."
         else:
             decision = "support" if attempts_count >= 3 or time_spent > 180 or hint_count >= 2 else "repeat"
             failed = [criterion for criterion, ok in per_criterion if not ok]
-            feedback = "Κριτήρια που δεν ικανοποιήθηκαν: " + "; ".join(failed) if failed else "Απαιτείται επιπλέον εξάσκηση."
+            raw = "Κριτήρια που δεν ικανοποιήθηκαν: " + "; ".join(failed) if failed else "Απαιτείται επιπλέον εξάσκηση."
 
+        feedback = _generate_assessment_feedback(is_correct, raw, current_task, ulevel)
         return {
             "is_correct": is_correct,
             "assessment_feedback": feedback,
             "assessment_score": score,
             "assessment_decision": decision,
-            "understanding_level": _understanding_level(score, attempts_count, hint_count, is_correct),
+            "understanding_level": ulevel,
             "result": "PASS" if is_correct else "FAIL"
         }
     except Exception:

@@ -32,3 +32,8 @@ async def init_db(): # Συνάρτηση για την αρχικοποίηση
             await conn.execute(text("ALTER TABLE users ADD COLUMN understanding_level VARCHAR NOT NULL DEFAULT 'developing'"))
         if "last_assessment_decision" not in columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN last_assessment_decision VARCHAR NOT NULL DEFAULT 'repeat'"))
+
+        # Index στο chat_histories.user_id για γρήγορη αναζήτηση ιστορικού ανά χρήστη
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_chat_histories_user_id ON chat_histories (user_id)"
+        ))

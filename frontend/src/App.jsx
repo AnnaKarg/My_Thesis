@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
-import { Send, Code2, Play, LogOut } from 'lucide-react';
+import { Send, Code2, Play, LogOut, Eye, EyeOff } from 'lucide-react';
 import './App.css';
 
 export default function App() {
@@ -10,6 +10,8 @@ export default function App() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [authForm, setAuthForm] = useState({ username: '', password: '' });
   const [authError, setAuthError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [registerSuccessModal, setRegisterSuccessModal] = useState(false);
 
   const [showEditor, setShowEditor] = useState(false);
   const [startTime, setStartTime] = useState(null);
@@ -81,15 +83,23 @@ export default function App() {
     try {
       const res = await axios.post(`http://127.0.0.1:8000/${endpoint}`, payload);
       if (isRegistering) {
-        alert("Η εγγραφή πέτυχε! Τώρα κάνε σύνδεση.");
+        setRegisterSuccessModal(true);
         setIsRegistering(false);
         setAuthForm({ username: '', password: '' });
+        setShowPassword(false);
       } else {
         setUser(res.data);
         localStorage.setItem('python_user_data', JSON.stringify(res.data));
       }
-    } catch (err) { 
-      setAuthError(err.response?.status === 401 ? "Λάθος όνομα ή κωδικός" : "Σφάλμα σύνδεσης με τον server"); 
+    } catch (err) {
+      const status = err.response?.status;
+      if (status === 401) {
+        setAuthError('Λάθος όνομα χρήστη ή κωδικός.');
+      } else if (status === 400 && isRegistering) {
+        setAuthError('Το όνομα χρήστη υπάρχει ήδη. Δοκίμασε διαφορετικό.');
+      } else {
+        setAuthError('Σφάλμα σύνδεσης με τον server. Δοκίμασε ξανά.');
+      }
     }
   };
 
@@ -212,23 +222,69 @@ export default function App() {
   if (!user) {
     return (
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#121212', color: 'white' }}>
+
+        {/* ── Modal επιτυχούς εγγραφής ── */}
+        {registerSuccessModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
+            <div style={{ background: '#1e1e1e', border: '1px solid #4caf50', borderRadius: '16px', padding: '36px 40px', textAlign: 'center', maxWidth: '340px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' }}>
+              <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>🎉</div>
+              <h3 style={{ color: '#4caf50', marginBottom: '10px' }}>Η εγγραφή έγινε!</h3>
+              <p style={{ color: '#ccc', fontSize: '0.95rem', marginBottom: '24px' }}>Ο λογαριασμός σου δημιουργήθηκε επιτυχώς. Μπορείς τώρα να συνδεθείς.</p>
+              <button
+                onClick={() => setRegisterSuccessModal(false)}
+                style={{ padding: '10px 30px', borderRadius: '8px', border: 'none', background: '#4caf50', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '1rem' }}
+              >
+                Σύνδεση
+              </button>
+            </div>
+          </div>
+        )}
+
         <div style={{ background: '#1e1e1e', padding: '40px', borderRadius: '20px', width: '350px', textAlign: 'center', boxShadow: '0 10px 40px rgba(0,0,0,0.6)' }}>
           <Code2 size={50} color="#4caf50" style={{ marginBottom: '15px' }} />
           <h2 style={{ marginBottom: '20px' }}>AI Python Tutor</h2>
-          <input 
-            style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #333', background: '#252526', color: 'white' }} 
-            placeholder="Username" value={authForm.username} onChange={e => setAuthForm({...authForm, username: e.target.value})} 
+
+          {/* Username */}
+          <input
+            style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #333', background: '#252526', color: 'white', boxSizing: 'border-box' }}
+            placeholder="Username"
+            value={authForm.username}
+            onChange={e => setAuthForm({...authForm, username: e.target.value})}
+            onKeyDown={e => e.key === 'Enter' && handleAuth()}
           />
-          <input 
-            type="password" 
-            style={{ width: '100%', padding: '12px', marginBottom: '20px', borderRadius: '8px', border: '1px solid #333', background: '#252526', color: 'white' }} 
-            placeholder="Password" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} 
-          />
-          {authError && <p style={{ color: '#ff5f56', fontSize: '0.8rem', marginBottom: '15px' }}>{authError}</p>}
-          <button onClick={handleAuth} style={{ width: '100%', padding: '12px', borderRadius: '8px', border: 'none', background: '#4caf50', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>
+
+          {/* Password με toggle ορατότητας */}
+          <div style={{ position: 'relative', marginBottom: '20px' }}>
+            <input
+              type={showPassword ? 'text' : 'password'}
+              style={{ width: '100%', padding: '12px', paddingRight: '44px', borderRadius: '8px', border: '1px solid #333', background: '#252526', color: 'white', boxSizing: 'border-box' }}
+              placeholder="Password"
+              value={authForm.password}
+              onChange={e => setAuthForm({...authForm, password: e.target.value})}
+              onKeyDown={e => e.key === 'Enter' && handleAuth()}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(p => !p)}
+              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: '#888', display: 'flex', alignItems: 'center', padding: '4px' }}
+              title={showPassword ? 'Απόκρυψη κωδικού' : 'Εμφάνιση κωδικού'}
+            >
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
+
+          {authError && <p style={{ color: '#ff5f56', fontSize: '0.85rem', marginBottom: '15px' }}>{authError}</p>}
+
+          <button
+            onClick={handleAuth}
+            style={{ width: '100%', padding: '12px', borderRadius: '8px', border: 'none', background: '#4caf50', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}
+          >
             {isRegistering ? 'Εγγραφή' : 'Είσοδος'}
           </button>
-          <p onClick={() => setIsRegistering(!isRegistering)} style={{ marginTop: '20px', color: '#4caf50', cursor: 'pointer', fontSize: '0.9rem' }}>
+          <p
+            onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); setShowPassword(false); }}
+            style={{ marginTop: '20px', color: '#4caf50', cursor: 'pointer', fontSize: '0.9rem' }}
+          >
             {isRegistering ? 'Επιστροφή στο Login' : 'Δημιουργία λογαριασμού'}
           </p>
         </div>
