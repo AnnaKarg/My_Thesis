@@ -54,7 +54,7 @@ def _build_welcome_message(username: str, db_history, current_lesson_id: int) ->
             "Πριν ξεκινήσουμε, πες μου: έχεις ξαναγράψει κώδικα ή είναι η πρώτη σου επαφή;"
         )
 
-    lesson_titles = ["Εισαγωγή και Μεταβλητές", "Τύποι Δεδομένων", "Δομές Ελέγχου", "Λίστες", "Επαναλήψεις", "Συναρτήσεις"]
+    lesson_titles = ["Μεταβλητές & Τύποι Δεδομένων", "Δομές Ελέγχου", "Λίστες", "Επαναλήψεις", "Συναρτήσεις"]
     idx = max(0, min(current_lesson_id - 1, len(lesson_titles) - 1))
     lesson_name = lesson_titles[idx]
 
@@ -205,7 +205,7 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     db_history = history_query.scalars().all()
 
     if db_history:
-        lesson_titles = ["Εισαγωγή και Μεταβλητές", "Τύποι Δεδομένων", "Δομές Ελέγχου", "Λίστες", "Επαναλήψεις", "Συναρτήσεις"]
+        lesson_titles = ["Μεταβλητές & Τύποι Δεδομένων", "Δομές Ελέγχου", "Λίστες", "Επαναλήψεις", "Συναρτήσεις"]
         idx = max(0, min(user.current_lesson_id - 1, len(lesson_titles) - 1))
         lesson_name = lesson_titles[idx]
 
@@ -285,7 +285,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         current_total_attempts = 0
         effective_event_type = "lesson_advanced"  # Ενημερώνει τον Mentor ότι ο χρήστης μόλις πέρασε στο νέο μάθημα
     
-    lesson_titles = ["Variables", "Data Types", "Conditions", "Lists", "Loops", "Functions"]
+    lesson_titles = ["Variables & Data Types", "Conditions", "Lists", "Loops", "Functions"]
     idx = max(0, min(user.current_lesson_id - 1, len(lesson_titles) - 1))
     current_lesson = lessons_content.get("lessons", [])[idx] if lessons_content.get("lessons") else {}
     lesson_name = lesson_titles[idx]
@@ -348,10 +348,11 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         "profile_checked": user.profile_checked
     }
 
+    output = {}
     try:
         output = await asyncio.wait_for(
             langgraph_app.ainvoke(state, config={"recursion_limit": 15}),
-            timeout=60 
+            timeout=60
         )
         raw_response = output["messages"][-1].content
         ai_response = re.sub(r'\n?\[(HINT|AWAITING_QUESTIONS)\]', '', raw_response).strip()
@@ -362,7 +363,10 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         is_correct_final = bool(output.get("is_correct", False)) and assessment_score >= MIN_PASS_SCORE and assessment_decision == "advance"
             
     except Exception:
-        ai_response = "Ωχ, κάτι με δυσκόλεψε στη σύνδεση. Μπορείς να ξαναδοκιμάσεις;"
+        if effective_event_type == "no_submission_timeout":
+            ai_response = "Μην ανησυχείς αν δυσκολεύεσαι λίγο — αυτό είναι φυσιολογικό! Πάρε λίγο χρόνο και δοκίμασε να γράψεις έστω και μια γραμμή. 💡"
+        else:
+            ai_response = "Ωχ, κάτι με δυσκόλεψε στη σύνδεση. Μπορείς να ξαναδοκιμάσεις;"
         is_correct_final = False
         assessment_score = 0
         assessment_decision = "repeat"
@@ -425,10 +429,14 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
 
     db.add(ChatHistory(user_id=user.id, role="ai", content=ai_response))
 
+    # code_was_correct: True όταν ο κώδικας ήταν σωστός (ακόμα κι αν decision="repeat").
+    # Χρησιμοποιείται από το frontend για να κλειδώσει τον editor μόλις η άσκηση λυθεί.
+    code_was_correct = bool(output.get("is_correct", False)) and assessment_score >= MIN_PASS_SCORE
+
     await db.commit()
     return {
         "mentor_response": ai_response,
-        "is_correct": is_correct_final,
+        "is_correct": code_was_correct,
         "assessment_score": assessment_score,
         "assessment_decision": assessment_decision,
         "course_completed": course_completed

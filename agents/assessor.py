@@ -130,11 +130,24 @@ def _extract_expected_from_task(current_task: str):
         factor = int(expr_match.group(3))
         expectations["expression_values"].append((left + right) * factor)
 
-    if "string" in task.lower() or "κείμενο" in task.lower():
-        expectations["string_names"].extend(name_matches[:1])
-    if "δεκαδ" in task.lower() or "αριθμ" in task.lower() or "number" in task.lower():
-        already_string = set(expectations["string_names"])
-        expectations["numeric_names"].extend([n for n in name_matches if n not in already_string])
+    # Specific pattern: "μεταβλητή X ως string" — captures ALL explicitly typed string vars
+    for m in re.finditer(r"μεταβλητ[ήη]\s+([A-Za-z_][A-Za-z0-9_]*)\s+ως\s+string", task, re.IGNORECASE):
+        vname = m.group(1)
+        if vname not in expectations["string_names"]:
+            expectations["string_names"].append(vname)
+    # Specific pattern: "μεταβλητή X ως αριθμό/int/float"
+    for m in re.finditer(r"μεταβλητ[ήη]\s+([A-Za-z_][A-Za-z0-9_]*)\s+ως\s+(?:αριθμό|int|float|δεκαδ\w*)", task, re.IGNORECASE):
+        vname = m.group(1)
+        if vname not in expectations["string_names"] and vname not in expectations["numeric_names"]:
+            expectations["numeric_names"].append(vname)
+    # Fallback: generic keyword detection (no explicit "μεταβλητή X ως" patterns found)
+    if not expectations["string_names"]:
+        if "string" in task.lower() or "κείμενο" in task.lower():
+            expectations["string_names"].extend(name_matches[:1])
+    if not expectations["numeric_names"]:
+        if "δεκαδ" in task.lower() or "αριθμ" in task.lower() or "number" in task.lower():
+            already_string = set(expectations["string_names"])
+            expectations["numeric_names"].extend([n for n in name_matches if n not in already_string])
 
     return expectations
 
@@ -378,7 +391,11 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
 
         ulevel = _understanding_level(score, attempts_count, hint_count, is_correct)
         if is_correct:
-            decision = "advance"
+            # Πολλές αποτυχίες/hints → συνιστούμε επιπλέον εξάσκηση πριν προχωρήσουμε
+            if attempts_count >= 4 or hint_count >= 3:
+                decision = "repeat"
+            else:
+                decision = "advance"
             raw = "Όλα τα κριτήρια ικανοποιούνται πλήρως."
         else:
             decision = "support" if attempts_count >= 3 or time_spent > 180 or hint_count >= 2 else "repeat"

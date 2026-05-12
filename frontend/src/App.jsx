@@ -14,9 +14,12 @@ export default function App() {
   const [registerSuccessModal, setRegisterSuccessModal] = useState(false);
 
   const [showEditor, setShowEditor] = useState(false);
+  const [editorEnabled, setEditorEnabled] = useState(false);
   const [startTime, setStartTime] = useState(null);
   const [taskActive, setTaskActive] = useState(false);
-  const [timeoutHintSent, setTimeoutHintSent] = useState(false);
+  const [hintStage, setHintStage] = useState(0);        // 0=καμία υπόδειξη, 1/2/3=έχουν σταλεί
+  const [lastActivityTime, setLastActivityTime] = useState(null); // τελευταία ενέργεια (start ή υποβολή)
+  const HINT_DELAYS = [40000, 60000, 90000]; // ms μεταξύ υποδείξεων
   const [code, setCode] = useState('# Γράψε τον κώδικά σου εδώ...');
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -106,30 +109,35 @@ export default function App() {
   const handleLogout = () => {
     setUser(null);
     setShowEditor(false);
+    setEditorEnabled(false);
     setStartTime(null);
     setTaskActive(false);
-    setTimeoutHintSent(false);
+    setHintStage(0);
+    setLastActivityTime(null);
     localStorage.removeItem('python_user_data');
     setMessages([]);
   };
 
   const handleStartTask = () => {
+    const now = Date.now();
     setShowEditor(true);
-    setStartTime(Date.now());
+    setEditorEnabled(true);
+    setStartTime(now);
     setTaskActive(true);
-    setTimeoutHintSent(false);
+    setHintStage(0);
+    setLastActivityTime(now);
+    setCode('# Γράψε τον κώδικά σου εδώ...');
   };
 
-  const requestNoSubmissionHint = async () => {
-    if (!user?.id || !taskActive || timeoutHintSent || !startTime) return;
+  const requestNoSubmissionHint = async (stage) => {
+    if (!user?.id || !taskActive) return;
 
     setLoading(true);
-    setTimeoutHintSent(true);
-    const elapsedSeconds = Math.max(0, (Date.now() - startTime) / 1000);
+    const elapsedSeconds = startTime ? Math.max(0, (Date.now() - startTime) / 1000) : 0;
 
     try {
       const res = await axios.post(`http://127.0.0.1:8000/chat/${user.id}`, {
-        message: '__NO_SUBMISSION_40S__',
+        message: '__NO_SUBMISSION_TIMEOUT__',
         code: '',
         time_spent: elapsedSeconds,
         is_task_attempt: false,
@@ -142,21 +150,25 @@ export default function App() {
       setMessages(prev => [...prev, { role: 'ai', content: 'Δεν μπόρεσα να στείλω αυτόματο hint αυτή τη στιγμή.' }]);
     } finally {
       setLoading(false);
+      setHintStage(stage + 1);
+      setLastActivityTime(Date.now()); // επαναφορά χρόνου για το επόμενο hint
     }
   };
 
+  // Multi-stage timeout: πυροδοτεί σειριακά hints με αυξανόμενο delay
   useEffect(() => {
-    if (!taskActive || timeoutHintSent || !startTime) return;
+    if (!taskActive || !lastActivityTime || hintStage >= HINT_DELAYS.length) return;
 
-    const elapsed = (Date.now() - startTime) / 1000;
-    const remainingMs = Math.max(0, (40 - elapsed) * 1000);
+    const delay = HINT_DELAYS[hintStage];
+    const elapsed = Date.now() - lastActivityTime;
+    const remaining = Math.max(0, delay - elapsed);
 
     const timerId = window.setTimeout(() => {
-      requestNoSubmissionHint();
-    }, remainingMs);
+      requestNoSubmissionHint(hintStage);
+    }, remaining);
 
     return () => window.clearTimeout(timerId);
-  }, [taskActive, timeoutHintSent, startTime]);
+  }, [taskActive, hintStage, lastActivityTime]);
 
   const sendChatMessage = async (overrideMessage = null) => {
     const textToSend = overrideMessage || chatInput;
@@ -182,7 +194,7 @@ export default function App() {
 
   const handleRunCode = async () => {
     setLoading(true);
-    setTimeoutHintSent(true);
+    setHintStage(HINT_DELAYS.length); // παύση timer κατά τη διάρκεια της υποβολής
     const timeSpent = startTime ? (Date.now() - startTime) / 1000 : 0;
     const codeToSubmit = typeof code === 'string' ? code : '';
     const submissionMessage = codeToSubmit.trim()
@@ -207,10 +219,18 @@ export default function App() {
 
       setMessages(prev => [...prev, { role: 'ai', content: mentorResponse }]);
 
-      // Ο χρονομετρητής σταματά μόνο όταν υπάρξει σωστή λύση ή ολοκλήρωση μαθημάτων.
       if (isCorrect || courseCompleted) {
+        // Σωστή λύση → κλείδωμα editor μέχρι το κουμπί της επόμενης άσκησης
         setStartTime(null);
         setTaskActive(false);
+        setEditorEnabled(false);
+        setHintStage(0);
+        setLastActivityTime(null);
+      } else {
+        // Λανθασμένη υποβολή → επαναφορά timer (αρχίζει ξανά από hint 1)
+        const now = Date.now();
+        setHintStage(0);
+        setLastActivityTime(now);
       }
     } catch (err) {
       console.error(err);
@@ -226,13 +246,13 @@ export default function App() {
         {/* ── Modal επιτυχούς εγγραφής ── */}
         {registerSuccessModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
-            <div style={{ background: '#1e1e1e', border: '1px solid #4caf50', borderRadius: '16px', padding: '36px 40px', textAlign: 'center', maxWidth: '340px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' }}>
-              <div style={{ fontSize: '2.5rem', marginBottom: '12px' }}>🎉</div>
-              <h3 style={{ color: '#4caf50', marginBottom: '10px' }}>Η εγγραφή έγινε!</h3>
-              <p style={{ color: '#ccc', fontSize: '0.95rem', marginBottom: '24px' }}>Ο λογαριασμός σου δημιουργήθηκε επιτυχώς. Μπορείς τώρα να συνδεθείς.</p>
+            <div style={{ background: '#1e1e1e', border: '1px solid #4caf50', borderRadius: '16px', padding: '40px 48px', textAlign: 'center', maxWidth: '420px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' }}>
+              <div style={{ fontSize: '3rem', marginBottom: '14px' }}>🎉</div>
+              <h3 style={{ color: '#4caf50', marginBottom: '12px', fontSize: '1.3rem' }}>Η εγγραφή έγινε!</h3>
+              <p style={{ color: '#ccc', fontSize: '1.05rem', marginBottom: '28px' }}>Ο λογαριασμός σου δημιουργήθηκε επιτυχώς. Μπορείς τώρα να συνδεθείς.</p>
               <button
                 onClick={() => setRegisterSuccessModal(false)}
-                style={{ padding: '10px 30px', borderRadius: '8px', border: 'none', background: '#4caf50', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '1rem' }}
+                style={{ padding: '12px 36px', borderRadius: '8px', border: 'none', background: '#4caf50', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem' }}
               >
                 Σύνδεση
               </button>
@@ -240,25 +260,28 @@ export default function App() {
           </div>
         )}
 
-        <div style={{ background: '#1e1e1e', padding: '40px', borderRadius: '20px', width: '350px', textAlign: 'center', boxShadow: '0 10px 40px rgba(0,0,0,0.6)' }}>
-          <Code2 size={50} color="#4caf50" style={{ marginBottom: '15px' }} />
-          <h2 style={{ marginBottom: '20px' }}>AI Python Tutor</h2>
+        <div style={{ background: '#1e1e1e', padding: '52px 56px', borderRadius: '24px', width: '460px', textAlign: 'center', boxShadow: '0 10px 48px rgba(0,0,0,0.7)' }}>
+          <Code2 size={60} color="#4caf50" style={{ marginBottom: '18px' }} />
+          <h2 style={{ marginBottom: '8px', fontSize: '1.8rem' }}>AI Python Tutor</h2>
+          <p style={{ color: '#888', fontSize: '1rem', marginBottom: '28px' }}>
+            {isRegistering ? 'Δημιούργησε λογαριασμό για να ξεκινήσεις' : 'Συνδέσου για να γνωρίσεις τον κόσμο της Python.'}
+          </p>
 
           {/* Username */}
           <input
-            style={{ width: '100%', padding: '12px', marginBottom: '10px', borderRadius: '8px', border: '1px solid #333', background: '#252526', color: 'white', boxSizing: 'border-box' }}
-            placeholder="Username"
+            style={{ width: '100%', padding: '14px 16px', marginBottom: '14px', borderRadius: '10px', border: '1px solid #444', background: '#2a2a2a', color: 'white', boxSizing: 'border-box', fontSize: '1.05rem' }}
+            placeholder="Όνομα χρήστη"
             value={authForm.username}
             onChange={e => setAuthForm({...authForm, username: e.target.value})}
             onKeyDown={e => e.key === 'Enter' && handleAuth()}
           />
 
           {/* Password με toggle ορατότητας */}
-          <div style={{ position: 'relative', marginBottom: '20px' }}>
+          <div style={{ position: 'relative', marginBottom: '24px' }}>
             <input
               type={showPassword ? 'text' : 'password'}
-              style={{ width: '100%', padding: '12px', paddingRight: '44px', borderRadius: '8px', border: '1px solid #333', background: '#252526', color: 'white', boxSizing: 'border-box' }}
-              placeholder="Password"
+              style={{ width: '100%', padding: '14px 16px', paddingRight: '50px', borderRadius: '10px', border: '1px solid #444', background: '#2a2a2a', color: 'white', boxSizing: 'border-box', fontSize: '1.05rem' }}
+              placeholder="Κωδικός"
               value={authForm.password}
               onChange={e => setAuthForm({...authForm, password: e.target.value})}
               onKeyDown={e => e.key === 'Enter' && handleAuth()}
@@ -266,24 +289,24 @@ export default function App() {
             <button
               type="button"
               onClick={() => setShowPassword(p => !p)}
-              style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: '#888', display: 'flex', alignItems: 'center', padding: '4px' }}
+              style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: '#888', display: 'flex', alignItems: 'center', padding: '4px' }}
               title={showPassword ? 'Απόκρυψη κωδικού' : 'Εμφάνιση κωδικού'}
             >
-              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
             </button>
           </div>
 
-          {authError && <p style={{ color: '#ff5f56', fontSize: '0.85rem', marginBottom: '15px' }}>{authError}</p>}
+          {authError && <p style={{ color: '#ff5f56', fontSize: '0.95rem', marginBottom: '16px' }}>{authError}</p>}
 
           <button
             onClick={handleAuth}
-            style={{ width: '100%', padding: '12px', borderRadius: '8px', border: 'none', background: '#4caf50', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}
+            style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: '#4caf50', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem' }}
           >
             {isRegistering ? 'Εγγραφή' : 'Είσοδος'}
           </button>
           <p
             onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); setShowPassword(false); }}
-            style={{ marginTop: '20px', color: '#4caf50', cursor: 'pointer', fontSize: '0.9rem' }}
+            style={{ marginTop: '22px', color: '#4caf50', cursor: 'pointer', fontSize: '1rem' }}
           >
             {isRegistering ? 'Επιστροφή στο Login' : 'Δημιουργία λογαριασμού'}
           </p>
@@ -302,37 +325,47 @@ export default function App() {
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {messages.map((m, i) => (
-            <div key={i} style={{ alignSelf: m.role === 'human' ? 'flex-end' : 'flex-start', maxWidth: '90%' }}>
-              <div style={{ background: m.role === 'human' ? '#007acc' : '#3e3e42', padding: '15px', borderRadius: '15px' }}>
-                <ReactMarkdown>
-                  {sanitizeMentorText(m.content)}
-                </ReactMarkdown>
-                
-                {hasStartButtonToken(m.content) && !showEditor && (
-                  <button 
-                    onClick={handleStartTask}
-                    style={{ marginTop: '15px', padding: '10px 20px', background: '#4caf50', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    🚀 Ξεκινάμε!
-                  </button>
-                )}
+          {(() => {
+            const lastStartIdx = messages.reduceRight(
+              (acc, m, i) => (acc === -1 && hasStartButtonToken(m.content) ? i : acc), -1
+            );
+            return messages.map((m, i) => (
+              <div key={i} style={{ alignSelf: m.role === 'human' ? 'flex-end' : 'flex-start', maxWidth: '90%' }}>
+                <div style={{ background: m.role === 'human' ? '#007acc' : '#3e3e42', padding: '16px 18px', borderRadius: '15px', fontSize: '1.05rem', lineHeight: '1.6' }}>
+                  <ReactMarkdown>
+                    {sanitizeMentorText(m.content)}
+                  </ReactMarkdown>
+
+                  {hasStartButtonToken(m.content) && i === lastStartIdx && !editorEnabled && (
+                    <button
+                      onClick={handleStartTask}
+                      style={{ marginTop: '15px', padding: '10px 20px', background: '#4caf50', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem' }}
+                    >
+                      🚀 Πάτα εδώ για να ξεκινήσεις την άσκηση!
+                    </button>
+                  )}
+                  {hasStartButtonToken(m.content) && i === lastStartIdx && editorEnabled && (
+                    <span style={{ marginTop: '12px', display: 'inline-block', color: '#4caf50', fontSize: '0.85rem', fontStyle: 'italic' }}>
+                      ✅ Η άσκηση ξεκίνησε — γράφε στον editor!
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ));
+          })()}
           {loading && <div style={{ color: '#888', fontStyle: 'italic' }}>Ο Mentor πληκτρολογεί...</div>}
           <div ref={chatEndRef} />
         </div>
 
         <div style={{ padding: '20px', background: '#2d2d2d', display: 'flex', gap: '10px' }}>
-          <input 
-            style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: '#3c3c3c', color: 'white' }} 
-            value={chatInput} onChange={e => setChatInput(e.target.value)} 
-            onKeyDown={e => e.key === 'Enter' && sendChatMessage()} 
-            placeholder="Γράψε εδώ..." 
+          <input
+            style={{ flex: 1, padding: '14px 16px', borderRadius: '10px', border: 'none', background: '#3c3c3c', color: 'white', fontSize: '1.05rem' }}
+            value={chatInput} onChange={e => setChatInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && sendChatMessage()}
+            placeholder="Γράψε εδώ..."
           />
-          <button onClick={() => sendChatMessage()} style={{ background: '#007acc', border: 'none', padding: '12px', borderRadius: '10px' }}>
-            <Send size={20} color="white" />
+          <button onClick={() => sendChatMessage()} style={{ background: '#007acc', border: 'none', padding: '14px 16px', borderRadius: '10px' }}>
+            <Send size={22} color="white" />
           </button>
         </div>
       </div>
@@ -341,14 +374,60 @@ export default function App() {
         <div style={{ width: '60%', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '15px', background: '#1e1e1e', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Code2 size={18} color="#007acc" />
-              <span>{getEditorFileName(user?.username)}</span>
+              <Code2 size={18} color={editorEnabled ? '#007acc' : '#555'} />
+              <span style={{ color: editorEnabled ? 'white' : '#666' }}>{getEditorFileName(user?.username)}</span>
+              {!editorEnabled && (
+                <span style={{ fontSize: '0.75rem', color: '#888', background: '#333', padding: '2px 8px', borderRadius: '4px' }}>
+                  Η άσκηση δεν έχει ξεκινήσει ακόμα.
+                </span>
+              )}
             </div>
-            <button onClick={handleRunCode} style={{ background: '#4caf50', border: 'none', padding: '10px 20px', borderRadius: '8px', color: 'white', fontWeight: 'bold' }}>
+            <button
+              onClick={handleRunCode}
+              disabled={!editorEnabled}
+              style={{
+                background: editorEnabled ? '#4caf50' : '#3a3a3a',
+                border: 'none',
+                padding: '10px 20px',
+                borderRadius: '8px',
+                color: editorEnabled ? 'white' : '#666',
+                fontWeight: 'bold',
+                cursor: editorEnabled ? 'pointer' : 'not-allowed',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
               <Play size={18} /> Έλεγχος Κώδικα
             </button>
           </div>
-          <Editor height="100%" theme="vs-dark" defaultLanguage="python" value={code} onChange={(value) => setCode(value ?? '')} options={{ fontSize: 16 }} />
+          <div style={{ flex: 1, position: 'relative' }}>
+            <Editor
+              height="100%"
+              theme="vs-dark"
+              defaultLanguage="python"
+              value={code}
+              onChange={(value) => editorEnabled && setCode(value ?? '')}
+              options={{
+                fontSize: 16,
+                readOnly: !editorEnabled,
+                cursorStyle: editorEnabled ? 'line' : 'block',
+                renderLineHighlight: editorEnabled ? 'line' : 'none',
+              }}
+            />
+            {!editorEnabled && (
+              <div style={{
+                position: 'absolute', inset: 0,
+                background: 'rgba(0,0,0,0.18)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                pointerEvents: 'none',
+              }}>
+                <span style={{ color: '#aaa', fontSize: '1rem', background: 'rgba(30,30,30,0.88)', padding: '12px 24px', borderRadius: '10px', border: '1px solid #3a3a3a' }}>
+                  Η άσκηση δεν έχει ξεκινήσει ακόμα.
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

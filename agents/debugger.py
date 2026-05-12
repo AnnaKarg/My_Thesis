@@ -1,5 +1,6 @@
 import ast # Για deterministic ανάλυση σύνταξης και λογικών δομών
 import builtins # Για έλεγχο built-in ονομάτων
+import re
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 
@@ -102,7 +103,7 @@ def _deterministic_findings(tree, success_criteria):
         categories.add("undefined_name")
         findings.append("Χρήση μεταβλητής πριν από ανάθεση: " + ", ".join(undefined))
 
-    if ("if" in criteria_text or "δομή" in criteria_text) and not analyzer.has_if:
+    if (re.search(r'\bif\b', criteria_text) or "δομή" in criteria_text) and not analyzer.has_if:
         categories.add("missing_if")
         findings.append("Απουσία δομής if ενώ απαιτείται από τα κριτήρια.")
 
