@@ -161,7 +161,7 @@ def _semantic_analysis(student_code: str, success_criteria, current_task: str) -
         return ""
 
 
-def debugging_node(state):# Κύρια λογική του Debugger Agent
+def debugging_node(state):
     student_code = state.get("student_code", "")
     success_criteria = state.get("success_criteria", "")
     current_task = state.get("current_task", "")
