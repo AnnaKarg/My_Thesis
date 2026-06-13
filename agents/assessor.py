@@ -21,28 +21,29 @@ def _generate_assessment_feedback(
     current_task: str,
     understanding_level: str,
 ) -> str:
-    """Παράγει personalized feedback με LLM, grounded στα deterministic ευρήματα.
-    Η pass/fail απόφαση παραμένει πάντα deterministic — μόνο η διατύπωση είναι LLM."""
+    """Παράγει σύντομη τεχνική περιγραφή των ευρημάτων για χρήση ΩΣ CONTEXT από τον Mentor.
+    ΔΕΝ εμφανίζεται απευθείας στον μαθητή — τροφοδοτεί τον Mentor για παραγωγή hint.
+
+    PASS: επιστρέφει αμέσως χωρίς LLM κλήση (δεν χρειάζεται για context).
+    FAIL: LLM συνοψίζει ελεύθερα τα τεχνικά ευρήματα σε σύντομο context.
+    """
     if is_correct:
-        prompt = (
-            f"{ASSESSOR_SYSTEM_PROMPT}\n\n"
-            f"Εκφώνηση: {current_task}\n"
-            f"Αποτέλεσμα: PASS — Όλα τα κριτήρια ικανοποιήθηκαν.\n\n"
-            f"Γράψε 1 σύντομη πρόταση που επιβεβαιώνει ότι η λύση είναι σωστή. "
-            f"Ύφος: παιδαγωγικό, φιλικό.\n\nFeedback:"
-        )
-    else:
-        prompt = (
-            f"{ASSESSOR_SYSTEM_PROMPT}\n\n"
-            f"Εκφώνηση: {current_task}\n"
-            f"Τεχνικά ευρήματα: {raw_findings}\n"
-            f"Επίπεδο κατανόησης: {understanding_level}\n\n"
-            f"Γράψε 1-2 προτάσεις που εξηγούν τι χρειάζεται διόρθωση. "
-            f"ΜΗΝ δώσεις τη λύση. Ύφος: παιδαγωγικό, φιλικό.\n\nFeedback:"
-        )
+        # Δεν χρειάζεται LLM για PASS — ο Mentor ξέρει ήδη ότι πέρασε
+        return "Όλα τα κριτήρια ικανοποιούνται."
+
+    prompt = (
+        f"{ASSESSOR_SYSTEM_PROMPT}\n\n"
+        f"Εκφώνηση: {current_task}\n"
+        f"Τεχνικά ευρήματα: {raw_findings}\n"
+        f"Επίπεδο κατανόησης: {understanding_level}\n\n"
+        f"Συνόψισε τι χρειάζεται διόρθωση με βάση ΑΠΟΚΛΕΙΣΤΙΚΑ τα παραπάνω ευρήματα.\n"
+        f"ΜΗΝ υποθέσεις πρόσθετα προβλήματα. ΜΗΝ δώσεις τη λύση.\n"
+        f"Το κείμενο θα χρησιμοποιηθεί ως context από τον Mentor, όχι απευθείας στον μαθητή.\n\n"
+        f"Σύνοψη ευρημάτων:"
+    )
     try:
         result = llm_assessor.invoke(prompt)
-        return result.content.strip()
+        return result.content.strip() or raw_findings
     except Exception:
         return raw_findings
 
@@ -203,7 +204,8 @@ def _type_mismatch_detected(student_code: str, success_criteria, current_lesson:
     if not numeric_strings:
         return False, []
 
-    lesson_numeric_sensitive = current_lesson in {"Variables", "Data Types"}
+    # Ελέγχουμε με 'in' γιατί το current_lesson μπορεί να είναι "Variables & Data Types"
+    lesson_numeric_sensitive = "Variables" in current_lesson or "Data Types" in current_lesson
     criteria_numeric_sensitive = _criteria_requires_numeric(success_criteria)
 
     violating_vars = []
@@ -217,7 +219,8 @@ def _type_mismatch_detected(student_code: str, success_criteria, current_lesson:
 def _string_mismatch_detected(student_code: str, current_lesson: str):
     """Ελέγχει αν γνωστά string-type ονόματα μεταβλητών έχουν αναθεθεί μη-string τιμή.
     π.χ. email = 12  →  λάθος (πρέπει να είναι string)"""
-    if current_lesson not in {"Variables", "Data Types"}:
+    # Ελέγχουμε με 'in' γιατί το current_lesson μπορεί να είναι "Variables & Data Types"
+    if not ("Variables" in current_lesson or "Data Types" in current_lesson):
         return False, []
 
     try:
@@ -238,6 +241,52 @@ def _string_mismatch_detected(student_code: str, current_lesson: str):
 
     return bool(violating_vars), sorted(set(violating_vars))
 
+
+def _count_print_calls(student_code: str) -> int:
+    """Μετράει πόσα print() calls υπάρχουν στον κώδικα."""
+    try:
+        tree = ast.parse(student_code)
+    except SyntaxError:
+        return 0
+    return sum(
+        1 for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "print"
+    )
+
+def _get_printed_string_values(student_code: str) -> set:
+    """Επιστρέφει τα literal string ορίσματα που εμφανίζονται σε print() calls.
+    Π.χ. print("High") → {"High"}.
+    Χρησιμοποιείται για να ελέγξουμε αν η εκφώνηση ζητά συγκεκριμένο string output
+    (π.χ. 'High'/'Low') και ο μαθητής το έχει αντεστραμμένο."""
+    try:
+        tree = ast.parse(student_code)
+    except SyntaxError:
+        return set()
+    printed = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print":
+            for arg in node.args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    printed.add(arg.value)
+    return printed
+
+def _get_printed_var_names(student_code: str) -> set:
+    """Επιστρέφει το σύνολο ονομάτων μεταβλητών που εμφανίζονται ως ορίσματα σε print() calls.
+    Π.χ. print(age) και print(name) → {"age", "name"}.
+    Π.χ. print(age) και print(age) → {"age"} — δύο prints, μία μεταβλητή."""
+    try:
+        tree = ast.parse(student_code)
+    except SyntaxError:
+        return set()
+    printed = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print":
+            for arg in node.args:
+                if isinstance(arg, ast.Name):
+                    printed.add(arg.id)
+    return printed
 
 def _strict_task_matching(student_code: str, current_task: str):
     if not current_task:
@@ -262,6 +311,42 @@ def _strict_task_matching(student_code: str, current_task: str):
     for expected_value in expectations["numeric_values"] + expectations["expression_values"]:
         if expected_value not in assignments.values():
             failures.append(f"Δεν βρέθηκε η απαιτούμενη τιμή {expected_value} στο πρόγραμμα.")
+
+    # Έλεγχος ότι κάθε αναμενόμενη μεταβλητή εμφανίζεται σε print() call — όχι απλώς αρίθμηση calls.
+    # Αποτρέπει το print(x); print(x) να γίνεται αποδεκτό ως print(x); print(y).
+    task_lower = current_task.lower()
+    needs_multi_print = (
+        "τύπωνε και τις δύο" in task_lower
+        or "τύπωνε και τα δύο" in task_lower
+        or "τύπωνε και τις τρεις" in task_lower
+        or "τύπωνε και τα τρία" in task_lower
+        or ("τύπωνε" in task_lower and "με print" in task_lower and len(expectations["names"]) >= 2)
+    )
+    if needs_multi_print and expectations["names"]:
+        printed_vars = _get_printed_var_names(student_code)
+        missing_prints = [v for v in expectations["names"] if v not in printed_vars]
+        if missing_prints:
+            failures.append(
+                f"Πρέπει να τυπωθούν ΟΛΕς οι απαιτούμενες μεταβλητές με print(). "
+                f"Λείπει το print() για: {', '.join(missing_prints)}."
+            )
+
+    # Έλεγχος ότι τα literal strings που ζητά η εκφώνηση εμφανίζονται σε print() calls.
+    # Αποτρέπει π.χ. print("Low") όταν η εκφώνηση ζητά print("High").
+    # Εντοπίζει: τύπωνε "X" / τύπωνε 'X' / print("X") — έλεγχος case-sensitive.
+    required_print_strings = re.findall(
+        r'τύπ\w+\s+["\']([^"\']+)["\']',
+        current_task,
+        re.IGNORECASE
+    )
+    if required_print_strings:
+        printed_strings = _get_printed_string_values(student_code)
+        missing_strings = [s for s in required_print_strings if s not in printed_strings]
+        if missing_strings:
+            failures.append(
+                f"Δεν βρέθηκαν τα απαιτούμενα strings στα print() calls: "
+                f"{', '.join(missing_strings)}."
+            )
 
     return (len(failures) == 0), failures
 
@@ -297,6 +382,10 @@ def _criterion_passed(criterion: str, flags):
         return flags["has_return"]
     if "print" in c or "τύπων" in c:
         return flags["has_print"]
+    # Κριτήρια string/numeric αποθήκευσης — ελέγχονται ήδη από _type_mismatch_detected
+    # και _strict_task_matching. Εδώ χαρακτηρίζονται ως "passed" αν υπάρχει έστω μία ανάθεση.
+    if "εισαγωγικ" in c or "string" in c or "αριθμητ" in c or "χωρίς εισαγωγικ" in c:
+        return flags["has_assign"]
     return True
 
 def _understanding_level(score, attempts, hint_count, is_correct):

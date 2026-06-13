@@ -29,6 +29,20 @@ _NUMERIC_NAMES = {
     "temp", "speed", "numbers", "price", "rating", "count", "total"
 }
 
+# Αντιστοίχιση κατηγοριών λαθών → κατανοητή Ελληνική περιγραφή για προσωποποιημένα μηνύματα
+_ERROR_CATEGORY_LABELS = {
+    "undefined_name": "χρήση μεταβλητής πριν οριστεί",
+    "type_mismatch": "λάθος τύπος δεδομένων (π.χ. αριθμός μέσα σε εισαγωγικά)",
+    "missing_if": "δομή if/elif/else",
+    "missing_for": "for loop",
+    "missing_function": "ορισμός συνάρτησης με def",
+    "missing_append": "χρήση .append()",
+    "missing_list": "δημιουργία λίστας",
+    "missing_output": "ξεχασμένο print()",
+    "missing_index": "πρόσβαση στοιχείων λίστας με index",
+    "general_logic": "λογικά λάθη στη ροή του κώδικα",
+}
+
 def pick_lesson(state): # Επιλέγει το τρέχον μάθημα βάσει του state ή επιστρέφει το πρώτο μάθημα ως προεπιλογή
     lessons = lessons_content.get("lessons", [])
     if not lessons:
@@ -55,9 +69,51 @@ def _is_question_message(text: str) -> bool:
         "δεν καταλαβα", "δεν καταλαβαίνω",
         "απορια", "απορία", "δεν ξερω", "δεν ξέρω",
         "παραδειγμα", "παράδειγμα", "δωσε μου", "δώσε μου",
-        "δείξε μου", "δειξε μου", "μπορεις να εξηγησεις", "μπορείς να εξηγήσεις"
+        "δείξε μου", "δειξε μου", "μπορεις να εξηγησεις", "μπορείς να εξηγήσεις",
+        # Ρητό αίτημα για θεωρία/επανάληψη
+        "θεωρια", "θεωρία", "πες μου", "εξήγησε μου", "εξηγησε μου",
+        "ξαναπε", "ξαναπέ", "υπενθυμισε", "υπενθύμισε", "θυμισε", "θύμισε"
     ]
     return any(marker in normalized for marker in question_markers)
+
+def _task_already_presented(messages) -> bool:
+    """True αν ο μαθητής έχει ήδη λάβει την τρέχουσα άσκηση.
+    Σταματά στο [ASSESSMENT:REPEAT] ή [ASSESSMENT:ADVANCE] — και οι δύο σηματοδοτούν
+    τέλος άσκησης, άρα ό,τι ακολουθεί είναι νέα άσκηση (όχι υπενθύμιση)."""
+    for msg in reversed(messages[:-1]):  # εξαιρούμε το τελευταίο μήνυμα χρήστη
+        content = getattr(msg, 'content', '') or ''
+        if '[BUTTON:START_TASK]' in content or '[BUTTON:CONTINUE_TASK]' in content:
+            return True
+        if '[ASSESSMENT:ADVANCE]' in content or '[ASSESSMENT:REPEAT]' in content:
+            return False  # η άσκηση τελείωσε — η επόμενη είναι νέα
+    return False
+
+def _new_lesson_theory_shown(messages) -> bool:
+    """True αν, μετά το τελευταίο [ASSESSMENT:ADVANCE], η θεωρία της νέας ενότητας έχει ήδη παρουσιαστεί.
+    Εξετάζει σε αντίστροφη σειρά: αν βρει [AWAITING_QUESTIONS] ή [BUTTON:START_TASK] πριν το [ASSESSMENT:ADVANCE]
+    → η θεωρία έχει δειχθεί. Αν βρει [ASSESSMENT:ADVANCE] πρώτα → δεν έχει δειχθεί ακόμα."""
+    for msg in reversed(messages[:-1]):
+        content = getattr(msg, 'content', '') or ''
+        if '[BUTTON:START_TASK]' in content or '[BUTTON:CONTINUE_TASK]' in content:
+            return True   # άσκηση ξεκίνησε → θεωρία παρουσιάστηκε ή παρακάμφθηκε
+        if '[AWAITING_QUESTIONS]' in content:
+            return True   # θεωρία παρουσιάστηκε στη νέα ενότητα
+        if '[ASSESSMENT:ADVANCE]' in content:
+            return False  # φτάσαμε στο advance χωρίς θεωρία → δεν έχει παρουσιαστεί
+    return False
+
+def _is_repeat_exercise_mode(messages) -> bool:
+    """True αν η τελευταία άσκηση ολοκληρώθηκε με decision=repeat (υπάρχει [ASSESSMENT:REPEAT]
+    χωρίς νέο [BUTTON:START_TASK] μετά) — η επόμενη άσκηση είναι 'εξάσκηση επανάληψης'."""
+    for msg in reversed(messages[:-1]):
+        content = getattr(msg, 'content', '') or ''
+        if '[BUTTON:START_TASK]' in content or '[BUTTON:CONTINUE_TASK]' in content:
+            return False  # νέα άσκηση ήδη ξεκίνησε
+        if '[ASSESSMENT:REPEAT]' in content:
+            return True   # τελευταία άσκηση είχε repeat και νέα δεν έχει ακόμα εκχωρηθεί
+        if '[ASSESSMENT:ADVANCE]' in content:
+            return False
+    return False
 
 def _wants_to_start_task(text: str) -> bool:
     normalized = (text or "").strip().lower()
@@ -89,22 +145,18 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
     """
     stripped = (user_input or "").strip()
 
-    # Deterministic shortcuts για αναμφίβολες περιπτώσεις
+    # ── Μόνο αδιαμφισβήτητα deterministic shortcuts ────────────────────────────
+    # Keyword pre-checks για ερωτήσεις / wants_task ΑΦΑΙΡΕΘΗΚΑΝ σκόπιμα:
+    # το LLM ταξινομεί σημασιολογικά και καλύπτει κάθε διατύπωση — οι λίστες λέξεων
+    # έχουν περιορισμένο coverage και δημιουργούν false positives (π.χ. "δεν καταλαβα" → wants_task).
     if stripped in {"1", "2", "3"}:
         return f"menu_{stripped}"
     if not stripped:
         return "other"
-    # Υποβολή κώδικα → ποτέ wants_task/theory_question
     if "```" in stripped or stripped.lower().startswith("υποβολή κώδικα") or stripped.upper() == "CODE_SUBMISSION":
         return "other"
 
-    # Deterministic pre-check: ερωτήσεις ελέγχονται ΠΡΩΤΑ — "δεν καταλαβα" δεν πρέπει να ταξινομηθεί ως wants_task
-    if profile_checked and _is_question_message(stripped):
-        return "code_help" if task_started else "theory_question"
-    if profile_checked and _wants_to_start_task(stripped):
-        return "wants_task"
-
-    # Πλαίσιο και κατηγορίες ανά φάση
+    # ── Πλαίσιο και κατηγορίες ανά φάση ────────────────────────────────────────
     if not profile_checked:
         context_hint = "Ο χρήστης αποκρίνεται στην ερώτηση αν έχει ξαναγράψει κώδικα."
         categories = (
@@ -116,21 +168,28 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
     elif task_started:
         context_hint = "Ο χρήστης εργάζεται πάνω σε άσκηση Python."
         categories = (
-            "wants_task      - ο χρήστης θέλει νέα άσκηση ή απαντά θετικά για συνέχεια "
-            "(ναι, yes, οκ, πάμε, προχωράμε, αλλη ασκηση κλπ)\n"
-            "theory_question - ο χρήστης κάνει ερώτηση θεωρίας ή ζητά επεξήγηση/παράδειγμα\n"
+            "wants_task      - ο χρήστης θέλει νέα άσκηση ή απαντά θετικά για συνέχεια\n"
+            "                  (ναι, yes, οκ, πάμε, προχωράμε, αλλη ασκηση, καταλαβα, δεν εχω κλπ)\n"
+            "                  ΟΧΙ wants_task αν το μήνυμα ρωτάει 'πώς' ή 'μπορώ να' για σύνταξη\n"
+            "theory_question - ο χρήστης κάνει ερώτηση θεωρίας, ζητά εξήγηση ή παράδειγμα\n"
+            "                  (τι είναι, πώς, γιατί, δεν καταλαβα κάτι, εξήγησέ μου κλπ)\n"
+            "                  ΣΗΜΑΝΤΙΚΟ: 'μπορώ να κάνω X;' ή 'μπορώ να εκτυπώσω X;' = theory_question\n"
+            "                  ΣΗΜΑΝΤΙΚΟ: 'δεν καταλαβαίνω X' ή 'δεν καταλαβα πώς γίνεται X' = theory_question\n"
             "advance_lesson  - ο χρήστης θέλει να προχωρήσει στο επόμενο κεφάλαιο\n"
-            "code_help       - ο χρήστης ζητά βοήθεια με τον κώδικά του\n"
+            "code_help       - ο χρήστης ζητά βοήθεια με τον κώδικά του ή ρωτά για λάθος\n"
             "other           - κάτι άλλο"
         )
     else:
-        context_hint = "Ο χρήστης βρίσκεται στη φάση θεωρίας."
+        context_hint = "Ο χρήστης βρίσκεται στη φάση θεωρίας (δεν έχει ξεκινήσει άσκηση ακόμα)."
         categories = (
-            "wants_task      - ο χρήστης θέλει να ξεκινήσει ή να συνεχίσει με άσκηση "
-            "(προχωράμε, θελω ακομα μια ασκηση, θελω ασκηση, θελω ακομα, πάμε, έτοιμος, "
-            "δεν έχω απορία, ναι, yes, οκ, οκει, ας πάμε, κατάλαβα, εντάξει κλπ — ακόμα και με ορθογραφικά λάθη)\n"
-            "theory_question - ο χρήστης κάνει ερώτηση ή ζητά επεξήγηση/παράδειγμα "
-            "(τι είναι, πώς, γιατί, δώσε παράδειγμα, δεν καταλαβα κλπ)\n"
+            "wants_task      - ο χρήστης είναι έτοιμος για άσκηση ή δηλώνει ότι κατάλαβε και θέλει να προχωρήσει\n"
+            "                  (προχωράμε, πάμε, έτοιμος, ναι, οκ, καταλαβα, εντάξει, δεν έχω απορία, δεν εχω κλπ\n"
+            "                   — ΣΗΜΑΝΤΙΚΟ: 'δεν εχω' = 'δεν έχω απορίες' = wants_task\n"
+            "                   — ακόμα και με greeklish/ορθογραφικά λάθη: nai, katalava, proksorame κλπ)\n"
+            "theory_question - ο χρήστης κάνει ερώτηση ή ζητά εξήγηση/παράδειγμα για κάτι συγκεκριμένο\n"
+            "                  (τι είναι X, πώς λειτουργεί X, γιατί X, δεν καταλαβα ΤΙ είναι X,\n"
+            "                   δεν καταλαβα πώς δηλώνω X, εξήγησέ μου κλπ)\n"
+            "                  ΚΛΕΙΔΙ: αν το μήνυμα περιέχει ερώτηση για ΣΥΓΚΕΚΡΙΜΕΝΗ έννοια → theory_question\n"
             "advance_lesson  - ο χρήστης θέλει να πάει στο επόμενο κεφάλαιο/μάθημα\n"
             "other           - κάτι άλλο"
         )
@@ -168,20 +227,20 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
 
 
 def _answer_theory_question(user_input: str, lesson_title: str, theory: str, tone: str) -> str:
-    """Απαντά σε θεωρητική απορία GROUNDED στη theory της ενότητας.
-    Αποτρέπει hallucinations περιορίζοντας το LLM στο κείμενο της θεωρίας."""
+    """Απαντά σε θεωρητική απορία GROUNDED αποκλειστικά στη theory της ενότητας."""
     prompt_text = (
         f'Είσαι καθηγητής Python. Απάντησε στην ερώτηση ΑΠΟΚΛΕΙΣΤΙΚΑ βάσει '
         f'της παρακάτω θεωρίας.\n\n'
         f'Θεωρία ενότητας "{lesson_title}":\n{theory}\n\n'
         f'Οδηγίες:\n'
-        f'- Απάντησε σε 2-3 προτάσεις στα Ελληνικά\n'
-        f'- Ύφος: {tone}\n'
+        f'- Απάντησε στα Ελληνικά, φυσικά, ύφος: {tone}\n'
         f'- ΜΗΝ δώσεις άσκηση\n'
         f'- ΜΗΝ επαναλάβεις όλη τη θεωρία — μόνο ό,τι αφορά την ερώτηση\n'
-        f'- Αν ρωτά για παράδειγμα, δώσε ένα μικρό παράδειγμα κώδικα\n'
-        f'- Κλείσε ΠΑΝΤΑ με μία σύντομη ερώτηση που προσκαλεί τον μαθητή να συνεχίσει '
-        f'(π.χ. "Έγινε πιο ξεκάθαρο;", "Θέλεις και άλλο παράδειγμα;", "Πάμε παρακάτω;")\n\n'
+        f'- Αν ρωτά για παράδειγμα, δώσε ένα μικρό παράδειγμα από τη θεωρία\n'
+        f'- Κλείσε με μία σύντομη ερώτηση (π.χ. "Έγινε πιο ξεκάθαρο;")\n'
+        f'- ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: ΜΗΝ αναφερθείς σε έννοιες που ΔΕΝ υπάρχουν στο '
+        f'παραπάνω κείμενο θεωρίας (π.χ. αν η θεωρία δεν αναφέρει λίστες/sets/λεξικά, '
+        f'ΜΗΝ τα αναφέρεις).\n\n'
         f'Ερώτηση μαθητή: {user_input}\n\nΑπάντηση:'
     )
     try:
@@ -199,17 +258,20 @@ def _generate_hint_with_llm(
     current_task: str,
     difficulty: str,
     understanding_level: str,
-    assessment_feedback: str = ""
+    assessment_feedback: str = "",
+    frequent_errors: list = None
 ) -> str:
     """Hint generator με δύο στρατηγικές:
     - Δομικά λάθη (syntax, undefined_name κλπ): deterministic hint (ακριβές, χωρίς hallucinations).
     - Assessment failures (σωστός κώδικας που δεν πληροί κριτήρια): LLM grounded στην εκφώνηση.
+    Αν frequent_errors δοθεί, ο LLM λαμβάνει ως context τα συνήθη λάθη του μαθητή.
     """
     report = debug_report or ""
     has_structural_error = any(tag in report for tag in [
         "[DEBUG: ERROR]", "undefined_name", "type_mismatch",
         "missing_if", "missing_for", "missing_function",
-        "missing_append", "missing_list", "missing_output"
+        "missing_append", "missing_list", "missing_output",
+        "missing_index", "print_as_variable"
     ])
     if has_structural_error:
         # Deterministic για syntax/δομικά λάθη — αποφεύγει hallucinations
@@ -219,14 +281,22 @@ def _generate_hint_with_llm(
     clean_fb = _clean_feedback(assessment_feedback)
     # Αν ο Debugger βρήκε semantic πρόβλημα, το συμπεριλαμβάνουμε ως επιπλέον πλαίσιο
     semantic_context = report.replace("[DEBUG: SEMANTIC]", "").strip() if "[DEBUG: SEMANTIC]" in report else ""
+    # Συχνά λάθη μαθητή ως επιπλέον context για πιο στοχευμένο hint
+    frequent_ctx = ""
+    if frequent_errors:
+        top = [_ERROR_CATEGORY_LABELS.get(e, e) for e in (frequent_errors or [])[:3]]
+        frequent_ctx = f"Συνήθη λάθη αυτού του μαθητή: {', '.join(top)}.\n"
     prompt_text = (
         f"Είσαι καθηγητής Python. Ο κώδικας του μαθητή είναι συντακτικά σωστός "
         f"αλλά δεν ικανοποιεί τα κριτήρια της άσκησης.\n\n"
         f"Εκφώνηση: {current_task}\n"
         f"Αξιολόγηση Assessor: {clean_fb}\n"
         + (f"Σημασιολογική ανάλυση Debugger: {semantic_context}\n" if semantic_context else "")
+        + frequent_ctx
         + f"Επίπεδο κατανόησης μαθητή: {understanding_level}\n\n"
-        f"Δώσε ΕΝΑ hint (1-2 προτάσεις) που να οδηγεί στη σωστή κατεύθυνση. "
+        f"Δώσε ΕΝΑ hint (1-2 προτάσεις) που να οδηγεί στη σωστή κατεύθυνση.\n"
+        f"ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: Βασίσου ΑΠΟΚΛΕΙΣΤΙΚΑ στην 'Αξιολόγηση Assessor' και στη 'Σημασιολογική ανάλυση'.\n"
+        f"ΜΗΝ υποθέσεις πρόσθετα προβλήματα που δεν αναφέρονται εκεί.\n"
         f"ΜΗΝ δώσεις τη λύση. ΜΗΝ γράψεις κώδικα.\n\nHint:"
     )
     try:
@@ -237,24 +307,45 @@ def _generate_hint_with_llm(
         return _generate_targeted_hint(debug_report, difficulty, assessment_feedback)
 
 
-def _generate_transition(context_hint: str, tone: str = "φιλικά, ζεστά") -> str:
-    """Παράγει φυσική μεταβατική φράση (1-2 προτάσεις) με LLM.
+def _generate_mentor_response(
+    context: str,
+    indicative: str = "",
+    tone: str = "φιλικά",
+    must_not: str = "",
+    brief: bool = False,
+) -> str:
+    """Παράγει ελεύθερη, φυσική απάντηση Mentor — ο LLM σκέφτεται μόνος του.
 
-    Χρησιμοποιείται για conversational wrappers γύρω από structural content.
-    Επιστρέφει "" αν αποτύχει το LLM — ο caller χρησιμοποιεί fallback hardcoded φράση.
+    Δίνουμε:
+    - context: τι συμβαίνει (situation briefing) — ΟΧΙ hardcoded κείμενο
+    - indicative: ενδεικτική φράση ως πρόταση, ΟΧΙ υποχρεωτικό template
+    - must_not: τι να αποφύγει ρητά
+    - brief=True: 1-2 προτάσεις μόνο (για intros πριν από theory/task)
+
+    Επιστρέφει "" αν αποτύχει το LLM.
     """
+    indicative_part = f"\nΕνδεικτικά (ΟΧΙ αυτολεξεί): {indicative}" if indicative else ""
+    must_not_part = f"\nΑπόφυγε: {must_not}" if must_not else ""
+    length_hint = "Γράψε ΜΟΝΟ 1-2 προτάσεις." if brief else "Γράψε φυσικά."
+
     prompt_text = (
-        f"Είσαι ο Mentor, καθηγητής Python. Μιλάς ΩΣ ΚΑΘΗΓΗΤΗΣ προς τον μαθητή.\n"
-        f"Γράψε 1-2 φυσικές προτάσεις στα Ελληνικά. Ύφος: {tone}.\n"
-        f"Οδηγία: {context_hint}\n"
-        f"Κανόνες: μόνο η φράση, χωρίς κώδικα, χωρίς markdown headers, χωρίς επανάληψη θεωρίας.\n\n"
-        f"Φράση:"
+        f"Είσαι ο Mentor, καθηγητής Python. Μιλάς άμεσα στον μαθητή.\n"
+        f"Κατάσταση: {context}\n"
+        f"Τόνος: {tone}{indicative_part}{must_not_part}\n\n"
+        f"{length_hint} "
+        f"Χρησιμοποίησε ΠΑΝΤΑ β' ενικό (εσύ/σε/σου/δες/γράψε/δοκίμασε) — ΟΧΙ πληθυντικό (εσείς/σας/δείτε/γράψτε). "
+        f"ΜΗΝ γράψεις tokens ([BUTTON:...], [ASSESSMENT:...], [HINT] κλπ) ή markdown headers (###). "
+        f"Μόνο η ομιλία σου:\n"
     )
     try:
         result = llm.invoke(prompt_text)
         return result.content.strip()
     except Exception:
         return ""
+
+# Alias για συμβατότητα με παλιές κλήσεις — θα αντικατασταθεί σταδιακά
+def _generate_transition(context_hint: str, tone: str = "φιλικά, ζεστά") -> str:
+    return _generate_mentor_response(context=context_hint, tone=tone)
 
 
 async def generate_session_recap_async(history_pairs: list, lesson_name: str, username: str) -> str:
@@ -290,6 +381,44 @@ async def generate_session_recap_async(history_pairs: list, lesson_name: str, us
         return ""
 
 
+async def classify_pending_advance_intent_async(user_message: str, lesson_title: str) -> str:
+    """Ταξινομεί την πρόθεση του χρήστη όταν υπάρχει pending_advance (η άσκηση λύθηκε σωστά
+    αλλά το μάθημα δεν έχει ανεβεί ακόμα — περιμένουμε επιβεβαίωση ή αίτημα για επιπλέον άσκηση).
+
+    Επιστρέφει:
+      wants_advance        - ο χρήστης επιβεβαιώνει ότι θέλει να προχωρήσει στην επόμενη ενότητα
+      wants_more_practice  - ο χρήστης θέλει άλλη άσκηση ΣΤΗΝ ΙΔΙΑ ενότητα πριν προχωρήσει
+      other                - ερώτηση, σχόλιο, κάτι άλλο
+    """
+    prompt_text = (
+        f'Ο μαθητής μόλις έλυσε σωστά μια άσκηση στην ενότητα "{lesson_title}".\n'
+        f'Ο Mentor ρώτησε αν θέλει να προχωρήσει στην επόμενη ενότητα.\n\n'
+        f'Κατηγοριοποίησε τι λέει ο μαθητής. Απάντησε ΜΟΝΟ με μία λέξη-κλειδί:\n'
+        f'wants_advance       - επιβεβαιώνει ότι θέλει να προχωρήσει\n'
+        f'                      (ναι, yes, ok, πάμε, προχωράμε, συνεχίζουμε, εντάξει, τέλεια, next κλπ)\n'
+        f'wants_more_practice - θέλει άλλη άσκηση ΣΤΗΝ ΙΔΙΑ ενότητα πριν προχωρήσει\n'
+        f'                      (αλλη ασκηση, βεβαιωθώ, μείνω λίγο, δεν είμαι έτοιμος,\n'
+        f'                       μπορώ κι άλλη, θέλω να εξασκηθώ, ακόμα μια, στην ίδια ενότητα κλπ)\n'
+        f'other               - ερώτηση, σχόλιο, κάτι άλλο\n\n'
+        f'Μήνυμα μαθητή: "{user_message}"\n\nΛέξη-κλειδί:'
+    )
+    try:
+        result = await llm_classify.ainvoke(prompt_text)
+        intent = result.content.strip().lower().split()[0] if result.content.strip() else "other"
+        return intent if intent in {"wants_advance", "wants_more_practice", "other"} else "other"
+    except Exception:
+        # Keyword fallback
+        normalized = (user_message or "").lower()
+        affirmatives = ["ναι", "nai", "yes", "ok", "παμε", "πάμε", "προχωράμε",
+                        "προχωραμε", "εντάξει", "εντάξει", "τέλεια", "τελεια", "next"]
+        if any(w in normalized for w in affirmatives):
+            return "wants_advance"
+        practice_words = ["αλλη", "άλλη", "βεβαιωθ", "εξάσκ", "εξασκ", "ακόμα",
+                          "ακομα", "ίδια ενότητα", "ιδια ενοτητα", "μεινω", "μείνω"]
+        if any(w in normalized for w in practice_words):
+            return "wants_more_practice"
+        return "other"
+
 async def classify_profile_async(user_input: str) -> str:
     """Ταξινομεί αν ο χρήστης είναι expert ή beginner βάσει LLM.
     Fallback σε keyword matching αν το LLM αποτύχει."""
@@ -297,11 +426,19 @@ async def classify_profile_async(user_input: str) -> str:
         'Ο χρήστης αποκρίνεται στην ερώτηση '
         '"Έχεις ξαναγράψει κώδικα ή είναι η πρώτη σου επαφή;".\n'
         'Απάντησε ΜΟΝΟ με: expert ή beginner\n\n'
+        'ΚΑΝΟΝΑΣ: Οποιοσδήποτε βαθμός εμπειρίας — ακόμα και ελάχιστη επαφή με κώδικα — = expert.\n'
+        'Μόνο η ΑΠΟΛΥΤΗ απειρία (πρώτη φορά, ποτέ, δεν ξέρω τίποτα) = beginner.\n\n'
         'Παραδείγματα:\n'
         '"ναι έχω εμπειρία" → expert\n'
-        '"όχι, πρώτη φορά" → beginner\n'
+        '"εχω ασχοληθει γενικα με κωδικα" → expert\n'
+        '"εχω δουλεψει λιγο με python" → expert\n'
+        '"ξερω λιγο" → expert\n'
         '"λίγο, αλλά ξέρω βασικά" → expert\n'
-        '"δεν ξέρω τίποτα" → beginner\n\n'
+        '"έχω γράψει κάποια πράγματα" → expert\n'
+        '"yes" / "ναι" → expert\n'
+        '"όχι, πρώτη φορά" → beginner\n'
+        '"δεν ξέρω τίποτα" → beginner\n'
+        '"ποτέ μου" → beginner\n\n'
         f'Μήνυμα: "{user_input}"\n\nΑπάντηση:'
     )
     try:
@@ -310,27 +447,67 @@ async def classify_profile_async(user_input: str) -> str:
         return "expert" if "expert" in answer else "beginner"
     except Exception:
         msg = (user_input or "").lower()
-        if any(w in msg for w in ["ναι", "έχω ξαναγράψει", "γνωρίζω", "προχωρημένος", "ξέρω", "yes", "λίγο"]):
+        if any(w in msg for w in [
+            "ναι", "έχω", "εχω", "γνωρίζω", "γνωριζω", "προχωρημένος",
+            "ξέρω", "ξερω", "yes", "λίγο", "λιγο", "ασχολ", "δουλεψ", "γραψ"
+        ]):
             return "expert"
         return "beginner"
 
 # ── Deterministic helpers ────────────────────────────────────────────────────
 
 def _generate_targeted_hint(debug_report: str, difficulty: str, assessment_feedback: str = "") -> str:
-    """Μετατρέπει το τεχνικό debug_report σε κατανοητό hint για τον χρήστη."""
+    """Μετατρέπει το τεχνικό debug_report σε παιδαγωγικό hint για τον χρήστη.
+    Δεν αποκαλύπτει ακριβώς το λάθος — δίνει κατεύθυνση για να το βρει ο μαθητής μόνος του."""
     report = debug_report or ""
 
     if "[DEBUG: ERROR]" in report:
         error_part = report.replace("[DEBUG: ERROR]", "").strip().rstrip(".")
+
+        # Συγκεκριμένο: 'else if' αντί για 'elif'
+        if "else_if_error" in error_part:
+            return (
+                "Στην Python υπάρχει ειδική λέξη-κλειδί για πολλαπλές συνθήκες — "
+                "δεν χρησιμοποιούμε 'else if' όπως σε άλλες γλώσσες. "
+                "Ρίξε μια ματιά στη θεωρία για if/elif/else."
+            )
+        # Λείπει άνω-κάτω τελεία ή λάθος σύνταξη δομής ελέγχου
         if "expected ':'" in error_part:
-            return "Πρόσεξε τη σύνταξη: μετά τη συνθήκη if/for/while χρειάζεται άνω-κάτω τελεία (:) στο τέλος της γραμμής."
-        elif "invalid syntax" in error_part:
-            line_info = error_part.split("γραμμή")[-1].strip() if "γραμμή" in error_part else ""
-            return f"Συντακτικό λάθος{'στη γραμμή ' + line_info if line_info else ''}. Έλεγξε τη σύνταξη: παρενθέσεις, εισαγωγικά και άνω-κάτω τελείες."
-        elif "EOL" in error_part or "EOF" in error_part:
-            return "Φαίνεται ότι έχεις ανοιχτό εισαγωγικό ή παρένθεση που δεν έχει κλείσει."
-        else:
-            return f"Συντακτικό λάθος: {error_part}. Διόρθωσε τη γραμμή που αναφέρεται."
+            return (
+                "Κάτι λείπει από τη σύνταξη κάποιας δομής ελέγχου σου. "
+                "Έλεγξε αν κάθε if/elif/else/for/while τελειώνει με τον σωστό τρόπο."
+            )
+        # Λανθασμένη εσοχή
+        if "unexpected indent" in error_part or "unindent" in error_part:
+            return (
+                "Υπάρχει πρόβλημα με την εσοχή (indentation) κάποιας γραμμής. "
+                "Η Python είναι πολύ ευαίσθητη στα κενά μπροστά από κάθε γραμμή — "
+                "σιγουρέψου ότι χρησιμοποιείς 4 κενά ή Tab με συνέπεια."
+            )
+        # Ανεξάρτητα invalid syntax
+        if "invalid syntax" in error_part:
+            return (
+                "Υπάρχει συντακτικό λάθος στον κώδικά σου. "
+                "Διάβασε τον γραμμή-γραμμή και έλεγξε παρενθέσεις, εισαγωγικά και σύμβολα."
+            )
+        # Ανοιχτό εισαγωγικό/παρένθεση
+        if "EOL" in error_part or "EOF" in error_part or "unterminated" in error_part:
+            return (
+                "Φαίνεται ότι κάτι δεν έχει κλείσει σωστά. "
+                "Έλεγξε αν κάθε εισαγωγικό ή παρένθεση που ανοίγεις κλείνει και αντίστοιχα."
+            )
+        # Ζεύγος συμβόλου (unmatched paren κλπ)
+        if "unmatched" in error_part:
+            return (
+                "Κάποιο σύμβολο (παρένθεση ή εισαγωγικό) δεν έχει το ζεύγος του. "
+                "Ελέγξε προσεκτικά αν κάθε `(` έχει το `)` του και κάθε `\"` το αντίστοιχο κλείσιμο."
+            )
+        # Γενική περίπτωση — χωρίς τεχνικές λεπτομέρειες
+        return (
+            "Υπάρχει συντακτικό λάθος. "
+            "Διάβασε τον κώδικά σου προσεκτικά και έλεγξε τη σύνταξη — "
+            "συχνά φτάνει να τον διαβάσεις μια φορά αργά για να το εντοπίσεις."
+        )
 
     if "undefined_name" in report:
         # Ονόματα που σημασιολογικά είναι αριθμητικά — δεν έχουν νόημα ως string
@@ -373,6 +550,23 @@ def _generate_targeted_hint(debug_report: str, difficulty: str, assessment_feedb
 
     if "missing_list" in report:
         return "Λείπει η δημιουργία λίστας ([]). Ορίσ' τη πρώτα ως κενή λίστα ή με τιμές."
+
+    if "missing_index" in report:
+        return (
+            "Λείπει η πρόσβαση σε στοιχείο λίστας με index. "
+            "Για να πάρεις το πρώτο στοιχείο γράψε `λίστα[0]`, για το δεύτερο `λίστα[1]` κ.ο.κ."
+        )
+
+    if "print_as_variable" in report:
+        extra = ""
+        # Αν υπάρχουν ΚΑΙ type issues στο assessment feedback, τα αναφέρουμε μαζί
+        if assessment_feedback and "TYPE_ERROR" in assessment_feedback:
+            extra = " Επίσης, έλεγξε τους τύπους των μεταβλητών σου (αριθμός vs string)."
+        return (
+            "Πρόσεξε τη διαφορά: `print = (...)` αναθέτει μια τιμή στη μεταβλητή `print` — "
+            "αυτό \"σπάει\" τη συνάρτηση! Για να εκτυπώσεις τιμές χρησιμοποίησε παρενθέσεις: "
+            f"`print(μεταβλητή1, μεταβλητή2, ...)`{extra}"
+        )
 
     if "missing_output" in report:
         return "Λείπει η εντολή print(). Πρόσθεσέ την για να εμφανίσεις το αποτέλεσμα."
@@ -469,9 +663,17 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     assessment_decision = state.get("assessment_decision", "")
     assessment_feedback = state.get("assessment_feedback", "")
     performance_summary = state.get("performance_summary", "{}")
+    # Εξάγουμε frequent_error_categories για προσωποποιημένα μηνύματα
+    try:
+        _perf = json.loads(performance_summary) if isinstance(performance_summary, str) else (performance_summary or {})
+        frequent_errors = _perf.get("frequent_error_categories", [])
+    except Exception:
+        frequent_errors = []
     last_assessment_decision = _extract_last_assessment_decision(messages)
     experience = state.get("experience_level", "beginner")
+    difficulty_probe_direction = state.get("difficulty_probe_direction", "")
     attempts = state.get("attempts_count", 0)
+    hint_count = state.get("hint_count", 0)
     understanding_level = state.get("understanding_level", "developing")
 
     # Αυτόματη προσαρμογή δυσκολίας
@@ -523,7 +725,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     # Παρακάμπτουμε την ταξινόμηση για deterministic events που δεν εξαρτώνται από το user input
     if (
         is_first_login  # Πρώτος γύρος: πάντα deterministic, δεν ταξινομούμε το user input
-        or event_type in {"no_submission_timeout", "lesson_advanced"}
+        or event_type in {"no_submission_timeout", "lesson_advanced", "same_chapter_practice"}
         or is_correct
     ):
         intent = "other"
@@ -586,8 +788,10 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     deterministic_content = None
 
     if is_first_login and not profile_checked:
-        welcome = _generate_transition(
-            "Καλωσόρισε τον νέο μαθητή και ρώτα αν έχει ξαναγράψει κώδικα ή αν είναι η πρώτη του επαφή με προγραμματισμό",
+        # ΜΟΝΟ ΕΔΩ κρατάμε structured fallback — είναι το πρώτο μήνυμα επαφής
+        welcome = _generate_mentor_response(
+            context="Νέος μαθητής συνδέεται για πρώτη φορά. Καλωσόρισέ τον και ρώτα αν έχει ξαναγράψει κώδικα.",
+            indicative="π.χ. 'Γεια σου! Είμαι ο Mentor σου — πριν ξεκινήσουμε, έχεις γράψει ξανά κώδικα;'",
             tone="ζεστά, φιλικά, ενθαρρυντικά"
         )
         deterministic_content = welcome or (
@@ -595,105 +799,119 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             "Πριν ξεκινήσουμε, έχεις ξαναγράψει κώδικα ή είναι η πρώτη σου επαφή;"
         )
     elif is_first_login and profile_checked:
-        # Deterministic intro — χωρίς LLM για να εξασφαλίσουμε ότι πάντα εμφανίζεται
-        if experience == "beginner":
-            intro = (
-                f"Καλώς ήρθες! Μιας και ξεκινάς από μηδενική βάση, θα σε οδηγώ "
-                f"βήμα-βήμα χωρίς να παραλείψουμε τίποτα. "
-                f"Ας ξεκινήσουμε λοιπόν με την πρώτη μας ενότητα:"
-            )
-        else:
-            intro = (
-                f"Τέλεια! Εφόσον έχεις κάποιο υπόβαθρο, θα προχωρούμε με καλό ρυθμό. "
-                f"Ξεκινάμε με την πρώτη ενότητα:"
-            )
-        outro = _generate_transition(
-            f"Μόλις παρουσίασες τη θεωρία '{lesson_title}'. Ρώτα αν έχει απορίες ή αν είναι έτοιμος για άσκηση",
-            tone="φιλικά"
+        # intro: πριν τη θεωρία — brief=True + must_not για να μην την εξηγήσει ο LLM μόνος του
+        intro = _generate_mentor_response(
+            context=f"Μόλις έμαθες ότι ο μαθητής είναι {'αρχάριος' if experience == 'beginner' else 'έχει εμπειρία'}. Ξεκινάς να παρουσιάσεις τη θεωρία '{lesson_title}' που ακολουθεί αμέσως.",
+            indicative="π.χ. 'Τέλεια! Ξεκινάμε:' ή 'Καλώς! Ας δούμε:'",
+            tone="φιλικά, ζεστά",
+            brief=True,
+            must_not="εξηγήσεις ή περιγράψεις τη θεωρία — αυτή εμφανίζεται αμέσως μετά"
         )
-        outro = outro or "Έχεις κάποια απορία για αυτά που διάβασες; Αν είσαι έτοιμος να εξασκηθείς, γράψε 'προχωράμε'!"
+        outro = _generate_mentor_response(
+            context=f"Μόλις διάβασε ο μαθητής τη θεωρία '{lesson_title}'. Ρώτα αν έχει απορίες.",
+            indicative="π.χ. 'Έχεις κάποια απορία; Ή πάμε σε άσκηση;'",
+            tone="φιλικά",
+            brief=True,
+            must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
+        )
         deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
     elif event_type == "lesson_advanced":
-        intro = _generate_transition(
-            f"Ο μαθητής μόλις πέρασε στο κεφάλαιο '{lesson_title}'. Εκφράσου με ενθουσιασμό και ανακοίνωσε ότι αρχίζει η νέα θεωρία",
-            tone="ενθαρρυντικά, ζωηρά"
+        intro = _generate_mentor_response(
+            context=f"Ο μαθητής πέρασε στο κεφάλαιο '{lesson_title}'. Ανακοίνωσε το ξεκίνημα — η θεωρία ακολουθεί αμέσως.",
+            indicative="π.χ. 'Πολύ ωραία! Νέα ενότητα:' ή 'Εξαιρετικά! Πάμε στο επόμενο:'",
+            tone="ενθαρρυντικά, ζωηρά",
+            brief=True,
+            must_not="εξηγήσεις ή αναφέρεσαι στο περιεχόμενο της θεωρίας — αυτή ακολουθεί"
         )
-        intro = intro or "Πολύ ωραία, προχωράμε στο επόμενο κεφάλαιο!"
-        outro = _generate_transition(
-            f"Μόλις παρουσίασες τη θεωρία '{lesson_title}'. Ρώτα φιλικά αν έχει απορίες ή αν είναι έτοιμος για άσκηση",
-            tone="φιλικά" if difficulty == "easy" else "ενθαρρυντικά"
+        outro = _generate_mentor_response(
+            context=f"Ο μαθητής διάβασε τη θεωρία '{lesson_title}'. Ρώτα αν έχει απορίες.",
+            indicative="π.χ. 'Έχεις ερωτήσεις; Αν είσαι έτοιμος, πάμε!'",
+            tone="φιλικά",
+            brief=True,
+            must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
         )
-        outro = outro or "Έχεις κάποια απορία; Αν είσαι έτοιμος, γράψε 'προχωράμε'!"
         deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+    elif event_type == "same_chapter_practice":
+        # Ο μαθητής ζήτησε επιπλέον άσκηση στο ΙΔΙΟ κεφάλαιο πριν προχωρήσει —
+        # δίνουμε κατευθείαν νέα άσκηση χωρίς θεωρία, χωρίς just_advanced path.
+        task_intro = _generate_mentor_response(
+            context=f"Ο μαθητής ζητά επιπλέον άσκηση στην ενότητα '{lesson_title}' για να εδραιώσει την κατανόηση. Η εκφώνηση ακολουθεί αμέσως — γράψε μόνο μια σύντομη εναρκτήρια φράση.",
+            indicative="π.χ. 'Φυσικά! Να μια ακόμα:' ή 'Αμέσως!'",
+            tone="φιλικά, ενθαρρυντικά",
+            brief=True,
+            must_not="γράψεις οτιδήποτε που μοιάζει με εκφώνηση άσκησης — αυτή ακολουθεί αυτούσια αμέσως μετά"
+        )
+        deterministic_content = f"{task_intro}\n\n{task}\n\n[BUTTON:START_TASK]"
     elif event_type == "no_submission_timeout":
-        hint_stage = min(hint_count, 2)  # 0=πρώτο hint, 1=δεύτερο, 2=τρίτο
-        if difficulty == "easy":
-            easy_prompts = [
-                "Ο μαθητής δεν έχει γράψει κώδικα ακόμα. Ενθάρρυνέ τον απλά να ξεκινήσει — ΜΗΝ δώσεις καθόλου hint, μόνο κίνητρο.",
-                "Ο μαθητής εξακολουθεί να μην έχει υποβάλει. Δώσε ένα γενικό hint: ποιο ΕΙΔΟΣ εντολής χρειάζεται (π.χ. ανάθεση, print) χωρίς να δώσεις τον κώδικα.",
-                "Ο μαθητής δυσκολεύεται πολύ. Δώσε ένα πιο συγκεκριμένο hint που δείχνει ακριβώς τη ΔΟΜΗ που χρειάζεται, χωρίς να γράψεις τη λύση."
-            ]
-            easy_fallbacks = [
-                "Μην ανησυχείς, πάρε το σιγά-σιγά! Ξεκίνα με το πιο απλό κομμάτι της εκφώνησης.",
-                f"Hint: σκέψου ποια εντολή χρησιμοποιούμε για να αποθηκεύσουμε μια τιμή σε μεταβλητή.",
-                f"Δες ξανά την εκφώνηση: {task}\nΞεκίνα γράφοντας το όνομα της μεταβλητής, μετά `=`, μετά την τιμή."
-            ]
-            timeout_msg = _generate_transition(easy_prompts[hint_stage], tone="ηρεμιστικά, ενθαρρυντικά")
-            deterministic_content = timeout_msg or easy_fallbacks[hint_stage]
-        else:
-            hard_prompts = [
-                "Υπενθύμισε σύντομα την εκφώνηση χωρίς καθόλου hint — ο μαθητής πρέπει να σκεφτεί μόνος του.",
-                "Ο μαθητής αργεί. Δώσε ένα σύντομο τεχνικό hint για τη λύση, χωρίς να δώσεις κώδικα.",
-                "Δώσε ένα πιο ειδικό hint που δείχνει ποια έννοια ή εντολή είναι κλειδί για την εκφώνηση."
-            ]
-            hard_fallbacks = [
-                f"Θυμίσου την εκφώνηση:\n\n{task}",
-                f"Hint: σκέψου ποιες εντολές/δομές χρειάζεσαι για να λύσεις αυτή την άσκηση.",
-                f"Βρίσκεσαι στο σωστό δρόμο; Κοίτα ξανά την εκφώνηση και σκέψου ποιο βήμα λείπει:\n\n{task}"
-            ]
-            reminder = _generate_transition(hard_prompts[hint_stage], tone="ηρεμιστικά, παιδαγωγικά")
-            deterministic_content = reminder or hard_fallbacks[hint_stage]
+        hint_stage = min(hint_count, 2)
+        prev_mistake_ctx = f" Προηγούμενο λάθος: {assessment_feedback}." if assessment_feedback and hint_stage > 0 else ""
+        timeout_contexts = [
+            f"Ο μαθητής δεν έχει γράψει τίποτα για 40+ δευτερόλεπτα. Άσκηση: '{task}'. Ενθάρρυνέ τον — ΜΗΝ δώσεις hint ακόμα.",
+            f"Ο μαθητής αργεί αρκετά. Άσκηση: '{task}'.{prev_mistake_ctx} Δώσε ΕΝΑ hint για το ΤΙ χρειάζεται χωρίς κώδικα.",
+            f"Ο μαθητής συνεχίζει να δυσκολεύεται. Άσκηση: '{task}'.{prev_mistake_ctx} Δώσε πιο συγκεκριμένη υπόδειξη για τη δομή.",
+        ]
+        timeout_indicatives = [
+            "π.χ. 'Μην ανησυχείς, ξεκίνα με το πρώτο βήμα!'",
+            "π.χ. 'Σκέψου τι εντολή χρησιμοποιείς για να...'",
+            "π.χ. 'Για αυτή την άσκηση χρειάζεσαι [δομή]. Θυμάσαι πώς γράφεται;'",
+        ]
+        timeout_msg = _generate_mentor_response(
+            context=timeout_contexts[hint_stage],
+            indicative=timeout_indicatives[hint_stage],
+            tone="ηρεμιστικά, ενθαρρυντικά",
+            must_not="γράψεις πλήρη λύση ή κώδικα"
+        )
+        deterministic_content = timeout_msg or f"Κοίτα ξανά την εκφώνηση: {task}"
     elif menu_choice == "menu_1":
-        intro = _generate_transition(
-            f"Ο μαθητής ζητά επανάληψη θεωρίας '{lesson_title}'. Ανακοίνωσε ότι θα ξαναδούν τη θεωρία μαζί",
-            tone="φιλικά"
+        intro = _generate_mentor_response(
+            context=f"Ο μαθητής ζητά επανάληψη της θεωρίας '{lesson_title}' — η θεωρία ακολουθεί αμέσως.",
+            indicative="π.χ. 'Φυσικά! Να:' ή 'Ορίστε:'",
+            tone="φιλικά",
+            brief=True,
+            must_not="εξηγήσεις ή αναφέρεσαι στο περιεχόμενο της θεωρίας — αυτή ακολουθεί"
         )
-        intro = intro or "Ας ξαναδούμε τη θεωρία μαζί!"
-        outro = _generate_transition(
-            f"Μόλις παρουσίασες ξανά τη θεωρία '{lesson_title}'. Ρώτα αν έχει ερωτήσεις ή αν θέλει να δοκιμάσει την άσκηση",
-            tone="φιλικά"
+        outro = _generate_mentor_response(
+            context=f"Ο μαθητής ξαναδιάβασε τη θεωρία '{lesson_title}'. Ρώτα αν έχει ερωτήσεις.",
+            indicative="π.χ. 'Πιο ξεκάθαρο; Ή πάμε σε άσκηση!'",
+            tone="φιλικά",
+            brief=True,
+            must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
         )
-        outro = outro or "Έχεις ερωτήσεις; Αλλιώς γράψε 'προχωράμε' για να δοκιμάσεις!"
         deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
     elif menu_choice == "menu_2":
-        task_intro = _generate_transition(
-            f"Δίνεις νέα άσκηση στον μαθητή για την ενότητα '{lesson_title}'. Ανακοίνωσέ την σύντομα και ενθαρρυντικά",
-            tone="ενθαρρυντικά"
+        task_intro = _generate_mentor_response(
+            context=f"Δίνεις νέα άσκηση στον μαθητή στην ενότητα '{lesson_title}'. Η εκφώνηση ακολουθεί αμέσως — γράψε μόνο μια σύντομη εναρκτήρια φράση.",
+            indicative="π.χ. 'Ορίστε!' ή 'Να:' ή 'Πάμε!'",
+            tone="φιλικά, ζωηρά",
+            brief=True,
+            must_not="γράψεις οτιδήποτε που μοιάζει με εκφώνηση άσκησης — αυτή ακολουθεί αυτούσια αμέσως μετά"
         )
-        task_intro = task_intro or f"Τέλεια! Να μια νέα άσκηση για την ενότητα **{lesson_title}**:"
         deterministic_content = f"{task_intro}\n\n{task}\n\n[BUTTON:START_TASK]"
     elif menu_choice == "menu_3":
-        hint_text = _generate_hint_with_llm(debug_report, task, difficulty, understanding_level, assessment_feedback)
-        hint_intro = _generate_transition(
-            "Ο μαθητής ζήτησε hint για το λάθος του. Παρουσίασε το hint που ακολουθεί με παιδαγωγικό τρόπο",
-            tone="παιδαγωγικά, φιλικά"
+        hint_text = _generate_hint_with_llm(debug_report, task, difficulty, understanding_level, assessment_feedback, frequent_errors)
+        hint_intro = _generate_mentor_response(
+            context=f"Ο μαθητής ζήτησε hint για την άσκηση '{lesson_title}'. Μια υπόδειξη ακολουθεί αμέσως — γράψε μόνο μια εισαγωγική φράση.",
+            indicative="π.χ. 'Κοίτα εδώ:' ή 'Ορίστε μια υπόδειξη:'",
+            tone="παιδαγωγικά, φιλικά",
+            brief=True,
+            must_not="γράψεις ή επαναλάβεις την υπόδειξη — αυτή ακολουθεί αυτούσια"
         )
-        hint_intro = hint_intro or "Ας δούμε πιο προσεκτικά τι χρειάζεται διόρθωση:"
-        hint_outro = _generate_transition(
-            "Μόλις έδωσες hint. Ενθάρρυνε τον μαθητή να δοκιμάσει τη διόρθωση και να υποβάλει ξανά",
-            tone="ενθαρρυντικά"
+        hint_outro = _generate_mentor_response(
+            context="Μόλις δόθηκε μια υπόδειξη στον μαθητή. Ενθάρρυνέ τον να δοκιμάσει.",
+            indicative="π.χ. 'Δοκίμασε και πες μου!' ή 'Βλέπεις τώρα;'",
+            tone="ενθαρρυντικά",
+            brief=True,
+            must_not="επαναλάβεις την υπόδειξη"
         )
-        hint_outro = hint_outro or "Δοκίμασε να διορθώσεις αυτό το σημείο και υποβάλε ξανά!"
         deterministic_content = f"{hint_intro}\n\n{hint_text}\n\n{hint_outro}\n\n[ASSESSMENT:SUPPORT]\n[HINT]"
     elif next_chapter_request and task_started and last_assessment_decision in {"repeat", "support"}:
-        block_msg = _generate_transition(
-            f"Ο μαθητής θέλει να προχωρήσει στο επόμενο κεφάλαιο αλλά η αξιολόγηση λέει ότι χρειάζεται επανάληψη στην ενότητα '{lesson_title}'. Εξήγησε ευγενικά ότι αξίζει να εδραιωθεί πρώτα η κατανόηση",
+        block_msg = _generate_mentor_response(
+            context=f"Ο μαθητής θέλει να προχωρήσει αλλά χρειάζεται ακόμα εξάσκηση στην '{lesson_title}'. Εξήγησε ευγενικά και πρότεινε εναλλακτικές.",
+            indicative="π.χ. 'Καταλαβαίνω! Αλλά νομίζω αξίζει λίγη ακόμα εξάσκηση εδώ — θέλεις...'",
             tone="κατανοητικά, ευγενικά"
         )
-        block_msg = block_msg or "Καταλαβαίνω ότι θέλεις να προχωρήσουμε, αλλά φαίνεται ότι χρειάζεται λίγο ακόμη δουλειά σε αυτή την ενότητα."
         deterministic_content = (
             f"{block_msg}\n\n"
-            "Μπορούμε να κάνουμε ένα από τα εξής:\n"
             "1) Σύντομη επανάληψη θεωρίας\n"
             "2) Μία επιπλέον άσκηση\n"
             "3) Στοχευμένα hints πάνω στον κώδικά σου\n\n"
@@ -701,89 +919,170 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
         )
     elif is_correct:
         if assessment_decision == "advance":
-            congrats = _generate_transition(
-                f"Ο μαθητής έλυσε σωστά την άσκηση. Συγχάρες τον θερμά και ρώτα αν θέλει να προχωρήσει στην επόμενη ενότητα '{next_lesson_title}'",
+            # Συχνά λάθη — αναφέρουμε ΜΕΣΑ στο LLM context
+            error_ctx = ""
+            if frequent_errors:
+                top = [_ERROR_CATEGORY_LABELS.get(e, e) for e in frequent_errors[:2]]
+                error_ctx = f" Σημείωσε ότι σε αυτή την ενότητα δυσκολεύτηκε με: {' και '.join(top)}."
+            # Dynamic difficulty probe
+            probe_ctx = ""
+            if difficulty_probe_direction == "upgrade":
+                probe_ctx = " Επίσης ανακοίνωσε ότι τα πάει τόσο καλά που θα δοκιμάσεις μια πιο απαιτητική άσκηση — αν τα πάει καλά, τον ανεβάζεις επίπεδο!"
+            elif difficulty_probe_direction == "downgrade" and experience != "beginner":
+                probe_ctx = " Επίσης ανακοίνωσε ότι ξεπέρασε τις δυσκολίες και επιστρέφετε σιγά-σιγά στις πιο απαιτητικές ασκήσεις."
+            congrats = _generate_mentor_response(
+                context=f"Ο μαθητής έλυσε σωστά την άσκηση '{lesson_title}'. Συγχάρεσέ τον και ρώτα αν θέλει να προχωρήσει στην '{next_lesson_title}'.{error_ctx}{probe_ctx}",
+                indicative="π.χ. 'Εξαιρετικά! Πάμε στα...' ή 'Μπράβο! Θέλεις να δούμε τα...'",
                 tone="ενθουσιαστικά, ζεστά"
             )
-            congrats = congrats or f"Μπράβο, η λύση σου είναι σωστή! Πολύ καλή δουλειά!\n\nΘέλεις να προχωρήσουμε στην επόμενη ενότητα: **{next_lesson_title}**;"
             deterministic_content = f"{congrats}\n\n[ASSESSMENT:ADVANCE]"
         else:
-            # is_correct=True αλλά assessment_decision=support/repeat:
-            # δεν προάγουμε — προτείνουμε επιπλέον άσκηση χωρίς να δείξουμε εσωτερικά μηνύματα
-            congrats = _generate_transition(
-                f"Ο μαθητής έλυσε σωστά αλλά χρειάζεται περισσότερη εξάσκηση στην ενότητα '{lesson_title}'. Συγχάρες τον και προτρέψτον να συνεχίσει με άλλη άσκηση γράφοντας 'προχωράμε'",
+            # Σωστό αλλά χρειάζεται άλλη άσκηση
+            error_ctx = ""
+            if frequent_errors:
+                top = [_ERROR_CATEGORY_LABELS.get(e, e) for e in frequent_errors[:2]]
+                error_ctx = f" Δυσκολεύτηκε ιδιαίτερα με: {' και '.join(top)}."
+            congrats = _generate_mentor_response(
+                context=f"Ο μαθητής έλυσε σωστά αλλά χρειάστηκε πολλές προσπάθειες.{error_ctx} Συγχάρεσέ τον και εξήγησε ότι μία ακόμα άσκηση θα παγιώσει την κατανόηση — πες του να γράψει 'προχωράμε'.",
+                indicative="π.χ. 'Μπράβο που το έλυσες! Ας κάνουμε ακόμα μια για σιγουριά...'",
                 tone="ενθαρρυντικά, φιλικά"
             )
-            congrats = congrats or f"Μπράβο, η λύση σου είναι σωστή!\n\nΑς εξασκηθούμε λίγο ακόμα στην ενότητα **{lesson_title}**. Γράψε 'προχωράμε' για νέα άσκηση!"
             deterministic_content = f"{congrats}\n\n[ASSESSMENT:REPEAT]"
     elif wants_task:
-        task_intro = _generate_transition(
-            f"Ο μαθητής είναι έτοιμος για άσκηση στην ενότητα '{lesson_title}'. Παρουσίασε την άσκηση που ακολουθεί με ενθουσιασμό",
-            tone="ενθαρρυντικά"
+        # "Just advanced" state: το μάθημα έχει ήδη προχωρήσει στη DB (current_lesson_id+1) αλλά
+        # ο μαθητής δεν έχει δει ακόμα τη θεωρία της νέας ενότητας.
+        # Συμβαίνει όταν δεν ο χρήστης δεν απαντά με affirmative ("ναι/παμε")
+        # αλλά ζητά κατευθείαν άσκηση ("αλλη ασκηση", "δωσε μου ασκηση" κλπ).
+        just_advanced = (
+            _extract_last_assessment_decision(messages) == "advance"
+            and not _task_already_presented(messages)
+            and not _new_lesson_theory_shown(messages)
         )
-        task_intro = task_intro or f"Τέλεια! Να η άσκησή σου για την ενότητα **{lesson_title}**:"
-        deterministic_content = f"{task_intro}\n\n{task}\n\n[BUTTON:START_TASK]"
-    elif intent == "theory_question":
-        # Grounded LLM απάντηση στη θεωρητική απορία — περιορισμένη στο theory text
-        theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone)
-        deterministic_content = theory_answer
-    elif intent == "code_help":
-        # Ερώτηση κατά τη διάρκεια άσκησης
-        if task_started and debug_report and "[DEBUG: EMPTY]" not in debug_report:
-            decision_tag = "[ASSESSMENT:SUPPORT]" if assessment_decision == "support" else "[ASSESSMENT:REPEAT]"
-            hint_text = _generate_hint_with_llm(debug_report, task, difficulty, understanding_level, assessment_feedback)
-            hint_intro = _generate_transition(
-                "Ο μαθητής χρειάζεται βοήθεια με τον κώδικά του. Ανακοίνωσε παιδαγωγικά ότι θα δείτε μαζί το πρόβλημα",
-                tone="παιδαγωγικά, φιλικά"
+        if just_advanced:
+            # Ο μαθητής ζήτησε κατευθείαν άσκηση — δείχνουμε πρώτα τη νέα θεωρία
+            intro = _generate_mentor_response(
+                context=f"Ο μαθητής ολοκλήρωσε την προηγούμενη ενότητα. Ξεκινά η νέα ενότητα '{lesson_title}' — η θεωρία ακολουθεί αμέσως.",
+                indicative="π.χ. 'Τέλεια! Νέα ενότητα:' ή 'Πάμε!'",
+                tone="ενθαρρυντικά, ζεστά",
+                brief=True,
+                must_not="εξηγήσεις ή αναφέρεσαι στο περιεχόμενο της θεωρίας — αυτή ακολουθεί"
             )
-            hint_intro = hint_intro or "Ας δούμε μαζί τι συμβαίνει:"
-            hint_outro = _generate_transition(
-                "Μόλις εξήγησες το πρόβλημα. Ενθάρρυνε τον μαθητή να δοκιμάσει τη διόρθωση και να υποβάλει ξανά",
-                tone="ενθαρρυντικά"
+            outro = _generate_mentor_response(
+                context=f"Ο μαθητής διάβασε τη θεωρία '{lesson_title}'. Ρώτα αν έχει απορίες.",
+                indicative="π.χ. 'Ερωτήσεις; Ή πάμε σε άσκηση;'",
+                tone="φιλικά",
+                brief=True,
+                must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
             )
-            hint_outro = hint_outro or "Δοκίμασε να διορθώσεις αυτό το σημείο και υποβάλε ξανά τον κώδικά σου."
-            deterministic_content = f"{hint_intro}\n\n{hint_text}\n\n{hint_outro}\n\n{decision_tag}\n[HINT]"
+            deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+        elif _is_repeat_exercise_mode(messages):
+            error_ctx = ""
+            if frequent_errors:
+                top = [_ERROR_CATEGORY_LABELS.get(e, e) for e in frequent_errors[:2]]
+                error_ctx = f" Δυσκολεύτηκε ιδιαίτερα με: {' και '.join(top)}."
+            repeat_intro = _generate_mentor_response(
+                context=f"Ο μαθητής χρειάστηκε πολλές προσπάθειες.{error_ctx} Θα κάνει ακόμα μία άσκηση στην '{lesson_title}' — δεν είναι τιμωρία. Η εκφώνηση ακολουθεί αμέσως — γράψε μόνο ένα σύντομο ενθαρρυντικό μήνυμα.",
+                indicative="π.χ. 'Δεν πειράζει! Μια ακόμα:' ή 'Συμβαίνει — να μια νέα:'",
+                tone="ενθαρρυντικά, κατανοητικά",
+                brief=True,
+                must_not="γράψεις οτιδήποτε που μοιάζει με εκφώνηση άσκησης — αυτή ακολουθεί αυτούσια αμέσως μετά"
+            )
+            deterministic_content = f"{repeat_intro}\n\n{task}\n\n[BUTTON:START_TASK]"
+        elif _task_already_presented(messages):
+            reminder = _generate_mentor_response(
+                context=f"Η άσκηση της ενότητας '{lesson_title}' έχει ήδη δοθεί και ακολουθεί αυτούσια — γράψε μόνο μια εναρκτήρια φράση.",
+                indicative="π.χ. 'Θυμίσου:' ή 'Να η άσκησή σου:' ή 'Εδώ είναι:'",
+                tone="φιλικά",
+                brief=True,
+                must_not="γράψεις οτιδήποτε που μοιάζει με εκφώνηση άσκησης — αυτή ακολουθεί αυτούσια αμέσως μετά"
+            )
+            deterministic_content = f"{reminder}\n\n{task}\n\n[BUTTON:START_TASK]"
         else:
-            # Δεν υπάρχει debug report ακόμα — απάντα στη θεωρητική πλευρά
+            task_intro = _generate_mentor_response(
+                context=f"Δίνεις νέα άσκηση στον μαθητή στην ενότητα '{lesson_title}'. Η εκφώνηση ακολουθεί αμέσως — γράψε μόνο μια σύντομη εναρκτήρια φράση.",
+                indicative="π.χ. 'Ορίστε!' ή 'Να:' ή 'Πάμε!'",
+                tone="φιλικά, ζωηρά",
+                brief=True,
+                must_not="γράψεις οτιδήποτε που μοιάζει με εκφώνηση άσκησης — αυτή ακολουθεί αυτούσια αμέσως μετά"
+            )
+            deterministic_content = f"{task_intro}\n\n{task}\n\n[BUTTON:START_TASK]"
+    elif intent in {"theory_question", "code_help"}:
+        msg_lower = (user_input or "").lower()
+        wants_full_theory = any(kw in msg_lower for kw in [
+            "θεωρια", "θεωρία", "ξαναπε", "ξαναπέ", "υπενθυμισε", "υπενθύμισε", "θυμισε", "θύμισε"
+        ])
+        if wants_full_theory:
+            outro = _generate_mentor_response(
+                context=f"Ο μαθητής ξαναδιάβασε τη θεωρία '{lesson_title}'. Ρώτα αν έχει απορίες.",
+                indicative="π.χ. 'Ρώτα ό,τι δεν είναι ξεκάθαρο!' ή 'Πιο κατανοητό;'",
+                tone="φιλικά",
+                brief=True,
+                must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
+            )
+            deterministic_content = f"{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+        elif intent == "code_help" and task_started and debug_report and "[DEBUG: EMPTY]" not in debug_report:
+            decision_tag = "[ASSESSMENT:SUPPORT]" if assessment_decision == "support" else "[ASSESSMENT:REPEAT]"
+            hint_text = _generate_hint_with_llm(debug_report, task, difficulty, understanding_level, assessment_feedback, frequent_errors)
+            hint_wrap = _generate_mentor_response(
+                context=f"Ο μαθητής ζητά βοήθεια με τον κώδικά του. Παρουσίασε αυτή την υπόδειξη: '{hint_text}'. Ενθάρρυνέ τον να δοκιμάσει ξανά.",
+                indicative="π.χ. 'Ας δούμε:' ... 'Δοκίμασε και πες μου!'",
+                tone="παιδαγωγικά, φιλικά",
+                must_not="δώσεις πλήρη λύση ή κώδικα"
+            )
+            deterministic_content = f"{hint_wrap}\n\n{hint_text}\n\n{decision_tag}\n[HINT]"
+        else:
             theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone)
             deterministic_content = theory_answer
     elif awaiting_questions or (profile_checked and not task_started and not wants_task):
-        outro = _generate_transition(
-            f"Μόλις παρουσίασες τη θεωρία '{lesson_title}'. Ρώτα φιλικά αν έχει απορίες ή αν θέλει να ξεκινήσει την άσκηση",
-            tone="φιλικά" if difficulty == "easy" else "ενθαρρυντικά"
+        outro = _generate_mentor_response(
+            context=f"Ο μαθητής διάβασε τη θεωρία '{lesson_title}'. Ρώτα αν έχει απορίες.",
+            indicative="π.χ. 'Έχεις κάποια απορία; Ή πάμε σε άσκηση;'",
+            tone="φιλικά" if difficulty == "easy" else "ενθαρρυντικά",
+            brief=True,
+            must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
         )
-        outro = outro or "Έχεις κάποια απορία; Αν είσαι έτοιμος, γράψε 'προχωράμε'!"
         if not awaiting_questions:
-            # Πρώτη παρουσίαση θεωρίας για επιστρέφοντα χρήστη — χρειαζόμαστε μεταβατική φράση
-            intro = _generate_transition(
-                f"Ο μαθητής επιστρέφει και είσαι έτοιμος να παρουσιάσεις τη θεωρία '{lesson_title}'. "
-                f"Σύντομα ανακοίνωσε ότι ξεκινάτε με τη θεωρία",
-                tone="φιλικά, ζεστά"
+            intro = _generate_mentor_response(
+                context=f"Ο μαθητής επιστρέφει. Ξεκινά η θεωρία '{lesson_title}' — ακολουθεί αμέσως.",
+                indicative="π.χ. 'Καλώς! Να η θεωρία:' ή 'Ξεκινάμε:'",
+                tone="φιλικά, ζεστά",
+                brief=True,
+                must_not="εξηγήσεις ή αναφέρεσαι στο περιεχόμενο της θεωρίας"
             )
-            intro = intro or f"Ξεκινάμε με τη θεωρία της ενότητας **{lesson_title}**!"
             deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
         else:
             deterministic_content = f"{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
     elif task_started and not is_correct:
         decision_tag = "[ASSESSMENT:SUPPORT]" if assessment_decision == "support" else "[ASSESSMENT:REPEAT]"
-        hint_text = _generate_hint_with_llm(debug_report, task, difficulty, understanding_level, assessment_feedback)
-        hint_intro = _generate_transition(
-            "Ο κώδικας του μαθητή έχει λάθος. Ανακοίνωσε παιδαγωγικά ότι θα δεις τι χρειάζεται βελτίωση",
-            tone="παιδαγωγικά, φιλικά"
+        hint_text = _generate_hint_with_llm(debug_report, task, difficulty, understanding_level, assessment_feedback, frequent_errors)
+        # Downgrade probe context — ο LLM το χειρίζεται φυσικά
+        probe_ctx = ""
+        if difficulty_probe_direction == "downgrade":
+            probe_ctx = " Επίσης ανακοίνωσε ότι βλέπεις ότι δυσκολεύεται και θα δοκιμάσεις πιο απλές ασκήσεις για λίγο — τόνισε ότι δεν είναι πρόβλημα και μπορεί να ζητήσει δυσκολότερες όποτε θέλει."
+        hint_wrap = _generate_mentor_response(
+            context=f"Ο κώδικας του μαθητή έχει λάθος. Παρουσίασε αυτή την υπόδειξη: '{hint_text}'.{probe_ctx}",
+            indicative="π.χ. 'Βλέπω κάτι εδώ:' ή 'Κοίτα αυτό:'",
+            tone="παιδαγωγικά, φιλικά",
+            must_not="δώσεις πλήρη λύση ή γράψεις κώδικα"
         )
-        hint_intro = hint_intro or "Ας δούμε τι χρειάζεται διόρθωση:"
-        deterministic_content = f"{hint_intro}\n\n{hint_text}\n\n{decision_tag}\n[HINT]"
+        deterministic_content = f"{hint_wrap}\n\n{hint_text}\n\n{decision_tag}\n[HINT]"
     else:
-        outro = _generate_transition(
-            f"Παρουσιάζεις τη θεωρία της ενότητας '{lesson_title}'. Ρώτα αν έχει απορίες ή αν είναι έτοιμος να ξεκινήσει",
-            tone="φιλικά"
+        outro = _generate_mentor_response(
+            context=f"Παρουσιάζεις τη θεωρία '{lesson_title}' στον μαθητή. Ρώτα αν έχει απορίες.",
+            indicative="π.χ. 'Έχεις ερωτήσεις; Αν είσαι έτοιμος, πες μου!'",
+            tone="φιλικά",
+            brief=True,
+            must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
         )
-        outro = outro or "Έχεις κάποια απορία; Αν είσαι έτοιμος, γράψε 'προχωράμε'!"
         deterministic_content = f"{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
 
     # ── Επιστροφή αποτελέσματος ───────────────────────────────────────────────
     if deterministic_content is not None:
-        if wants_task and "[BUTTON:START_TASK]" not in deterministic_content:
+        # Προσθέτουμε [BUTTON:START_TASK] μόνο αν ο μαθητής θέλει άσκηση ΚΑΙ δεν έχει παρουσιαστεί θεωρία.
+        # Αν περιέχει [AWAITING_QUESTIONS] σημαίνει ότι εμφανίστηκε θεωρία — δεν βάζουμε ακόμα το button.
+        if (wants_task
+                and "[BUTTON:START_TASK]" not in deterministic_content
+                and "[AWAITING_QUESTIONS]" not in deterministic_content):
             deterministic_content += "\n\n[BUTTON:START_TASK]"
         return {
             "messages": [AIMessage(content=deterministic_content)],

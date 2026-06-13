@@ -24,6 +24,9 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [loading, setLoading] = useState(false);
+  // Ref ώστε το timer callback να βλέπει την τρέχουσα τιμή loading
+  // (το state δεν διαβάζεται σωστά μέσα σε stale closures setTimeout)
+  const loadingRef = useRef(false);
   const chatEndRef = useRef(null);
 
   const startButtonToken = '[BUTTON:START_TASK]';
@@ -130,8 +133,11 @@ export default function App() {
   };
 
   const requestNoSubmissionHint = async (stage) => {
-    if (!user?.id || !taskActive) return;
+    // Χρησιμοποιούμε loadingRef (όχι state) γιατί το setTimeout callback
+    // κλείνει πάνω σε stale τιμή — το ref ενημερώνεται συγχρονικά.
+    if (!user?.id || !taskActive || loadingRef.current) return;
 
+    loadingRef.current = true;
     setLoading(true);
     const elapsedSeconds = startTime ? Math.max(0, (Date.now() - startTime) / 1000) : 0;
 
@@ -149,6 +155,7 @@ export default function App() {
     } catch (err) {
       setMessages(prev => [...prev, { role: 'ai', content: 'Δεν μπόρεσα να στείλω αυτόματο hint αυτή τη στιγμή.' }]);
     } finally {
+      loadingRef.current = false;
       setLoading(false);
       setHintStage(stage + 1);
       setLastActivityTime(Date.now()); // επαναφορά χρόνου για το επόμενο hint
@@ -176,6 +183,7 @@ export default function App() {
 
     const msg = { role: 'human', content: textToSend };
     setMessages(prev => [...prev, msg]);
+    loadingRef.current = true;
     setLoading(true);
     if (!overrideMessage) setChatInput('');
 
@@ -189,10 +197,11 @@ export default function App() {
       setMessages(prev => [...prev, { role: 'ai', content: res.data.mentor_response }]);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'ai', content: "⚠️ Πρόβλημα σύνδεσης με το AI." }]);
-    } finally { setLoading(false); }
+    } finally { loadingRef.current = false; setLoading(false); }
   };
 
   const handleRunCode = async () => {
+    loadingRef.current = true;
     setLoading(true);
     setHintStage(HINT_DELAYS.length); // παύση timer κατά τη διάρκεια της υποβολής
     const timeSpent = startTime ? (Date.now() - startTime) / 1000 : 0;
@@ -235,8 +244,8 @@ export default function App() {
     } catch (err) {
       console.error(err);
       setMessages(prev => [...prev, { role: 'ai', content: "Δεν μπόρεσα να ελέγξω τον κώδικα αυτή τη στιγμή. Δοκίμασε ξανά." }]);
-    } 
-    finally { setLoading(false); }
+    }
+    finally { loadingRef.current = false; setLoading(false); }
   };
 
   if (!user) {
@@ -384,15 +393,15 @@ export default function App() {
             </div>
             <button
               onClick={handleRunCode}
-              disabled={!editorEnabled}
+              disabled={!editorEnabled || loading}
               style={{
-                background: editorEnabled ? '#4caf50' : '#3a3a3a',
+                background: (editorEnabled && !loading) ? '#4caf50' : '#3a3a3a',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '8px',
-                color: editorEnabled ? 'white' : '#666',
+                color: (editorEnabled && !loading) ? 'white' : '#666',
                 fontWeight: 'bold',
-                cursor: editorEnabled ? 'pointer' : 'not-allowed',
+                cursor: (editorEnabled && !loading) ? 'pointer' : 'not-allowed',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',

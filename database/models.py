@@ -17,6 +17,10 @@ class User(Base): # Ορίζουμε το μοντέλο User που αντιπ�
     solved_tasks = Column(Integer, default=0)
     understanding_level = Column(String, default="developing")
     last_assessment_decision = Column(String, default="repeat")
+    # Advance περιμένει επιβεβαίωση — το current_lesson_id ΔΕΝ ανεβαίνει αμέσως
+    pending_advance = Column(Boolean, default=False)
+    # Κατεύθυνση dynamic difficulty probe: "" | "upgrade" | "downgrade"
+    difficulty_probe_direction = Column(String, default="")
 
 class ChatHistory(Base): # Ορίζουμε το μοντέλο ChatHistory που αντιπροσωπεύει το ιστορικό συνομιλιών των χρηστών με τον Mentor
     __tablename__ = "chat_histories"

@@ -12,7 +12,12 @@ from pydantic import BaseModel # Για να ορίσει τα σχήματα τ
 from passlib.context import CryptContext # Για να χειριστεί την κρυπτογράφηση των κωδικών
 from langchain_core.messages import HumanMessage, AIMessage  # Για να δημιουργήσει μηνύματα για το μοντέλο γλώσσας
 from core.app import app as langgraph_app # Για να καλέσει το LangGraph app που τρέχει τους agents
-from agents.mentor import generate_random_task, classify_profile_async, generate_session_recap_async
+from agents.mentor import (
+    generate_random_task,
+    classify_profile_async,
+    generate_session_recap_async,
+    classify_pending_advance_intent_async,
+)
 
 router = APIRouter() # Δημιουργεί ένα router για να ορίσει τα API endpoints που σχετίζονται με το chat και την αυθεντικοποίηση
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto") # Ορίζει το context για την κρυπτογράφηση των κωδικών με bcrypt
@@ -21,8 +26,15 @@ LESSONS_PATH = Path(__file__).resolve().parents[1] / "content" / "lessons.json"
 with open(LESSONS_PATH, "r", encoding="utf-8") as f:
     lessons_content = json.load(f)
 
-TOTAL_LESSONS = len(lessons_content.get("lessons", [])) 
+TOTAL_LESSONS = len(lessons_content.get("lessons", []))
 MIN_PASS_SCORE = 80
+
+# Ενιαία λίστα τίτλων μαθημάτων — αντλείται απευθείας από το lessons.json
+# Αποφεύγουμε δύο ανεξάρτητες hardcoded λίστες που μπορούν να αποσυγχρονιστούν.
+_LESSON_TITLES_DISPLAY = [l.get("title", f"Μάθημα {l.get('id',i+1)}")
+                           for i, l in enumerate(lessons_content.get("lessons", []))]
+# Σύντομα αγγλικά ονόματα για το agent state (χρησιμοποιούνται από τον Assessor)
+_LESSON_TITLES_AGENT  = ["Variables & Data Types", "Conditions", "Lists", "Loops", "Functions"]
 
 class UserAuth(BaseModel): # Σχήμα για τα δεδομένα αυθεντικοποίησης που λαμβάνονται από το frontend
     username: str
@@ -54,9 +66,8 @@ def _build_welcome_message(username: str, db_history, current_lesson_id: int) ->
             "Πριν ξεκινήσουμε, πες μου: έχεις ξαναγράψει κώδικα ή είναι η πρώτη σου επαφή;"
         )
 
-    lesson_titles = ["Μεταβλητές & Τύποι Δεδομένων", "Δομές Ελέγχου", "Λίστες", "Επαναλήψεις", "Συναρτήσεις"]
-    idx = max(0, min(current_lesson_id - 1, len(lesson_titles) - 1))
-    lesson_name = lesson_titles[idx]
+    idx = max(0, min(current_lesson_id - 1, len(_LESSON_TITLES_DISPLAY) - 1))
+    lesson_name = _LESSON_TITLES_DISPLAY[idx]
 
     recent_human = [h.content for h in db_history if h.role == "human" and not _is_code_submission_message(h.content)]
     last_user_topic = recent_human[-1] if recent_human else "στην εισαγωγή μας"
@@ -84,7 +95,30 @@ def _infer_awaiting_questions(db_history, profile_checked: bool, task_started: b
     return False
 
 def _count_hints(db_history) -> int:
-    return sum(1 for h in db_history if h.role == "ai" and "[HINT]" in (h.content or ""))
+    """Μετράει hints ΜΟΝΟ για την τρέχουσα άσκηση (μετά το τελευταίο [BUTTON:START_TASK] ή [ASSESSMENT:ADVANCE]).
+    Αποτρέπει hints από προηγούμενες ασκήσεις/μαθήματα να επηρεάζουν την αξιολόγηση."""
+    count = 0
+    for h in reversed(db_history):
+        if h.role == "ai":
+            content = h.content or ""
+            if "[BUTTON:START_TASK]" in content or "[ASSESSMENT:ADVANCE]" in content:
+                break  # αρχή τρέχουσας άσκησης — σταματάμε
+            if "[HINT]" in content:
+                count += 1
+    return count
+
+def _count_attempts_since_last_task(db_history) -> int:
+    """Μετράει attempts ΜΟΝΟ για την τρέχουσα άσκηση (από το τελευταίο [BUTTON:START_TASK] ή [ASSESSMENT:ADVANCE]).
+    Αποτρέπει τη συσσώρευση attempts από προηγούμενες ασκήσεις να κρατά τον μαθητή σε 'repeat' για πάντα."""
+    count = 0
+    for h in reversed(db_history):
+        if h.role == "ai":
+            content = h.content or ""
+            if "[BUTTON:START_TASK]" in content or "[ASSESSMENT:ADVANCE]" in content:
+                break  # αρχή τρέχουσας άσκησης — μετράμε μόνο από εδώ και μετά
+        elif h.role == "human" and (h.attempts_count or 0) > 0:
+            count += h.attempts_count
+    return count
 
 def _has_recent_attempts(db_history) -> bool:
     """Επιστρέφει True μόνο αν υπάρχουν υποβολές κώδικα ΜΕΤΑ την τελευταία μετάβαση μαθήματος (ADVANCE).
@@ -96,24 +130,32 @@ def _has_recent_attempts(db_history) -> bool:
             return True
     return False
 
-def _should_reset_for_next_lesson(db_history, user_message: str) -> bool:
-    normalized = (user_message or "").strip().lower()
-    affirmative = any(word in normalized for word in ["ναι", "ναι.", "ναι!", "προχωράμε", "προχωραμε", "προχωράμε.", "προχωραμε.", "πάμε", "παμε", "next", "επόμενο", "επομενο"])
-    if not affirmative:
-        return False
-
+def _has_pending_advance_in_history(db_history) -> bool:
+    """True αν το τελευταίο AI μήνυμα περιέχει [ASSESSMENT:ADVANCE] — δηλαδή υπάρχει
+    εκκρεμής μετάβαση που περιμένει επιβεβαίωση από τον μαθητή."""
     for h in reversed(db_history):
         if h.role != "ai":
             continue
-
         content = (h.content or "")
-        if "[ASSESSMENT:ADVANCE]" in content:
-            return True
-        if "Θες να συνεχίσουμε με την επόμενη ενότητα" in content:
-            return True
-        break
-
+        return "[ASSESSMENT:ADVANCE]" in content
     return False
+
+def _should_reset_for_next_lesson(db_history, user_message: str) -> bool:
+    """Keyword-based fallback — χρησιμοποιείται ΜΟΝΟ όταν pending_advance=False
+    (δηλαδή για παλιές συνεδρίες που δεν έχουν το νέο flag).
+    Για pending_advance=True χρησιμοποιείται το LLM classify_pending_advance_intent_async."""
+    normalized = (user_message or "").strip().lower()
+    affirmative = any(word in normalized for word in [
+        "ναι", "ναι.", "ναι!", "nai", "ne", "yes", "yep", "ok", "okay",
+        "προχωράμε", "προχωραμε", "προχωράμε.", "προχωραμε.",
+        "πάμε", "παμε", "next", "επόμενο", "επομενο",
+        "εντάξει", "εντάξει!", "εντάξει.", "εντάξει,", "εντάξει;",
+        "τέλεια", "τελεια", "συνεχίζουμε", "συνεχιζουμε", "ας πάμε", "ας παμε"
+    ])
+    if not affirmative:
+        return False
+
+    return _has_pending_advance_in_history(db_history)
 
 def _extract_debug_categories(debug_report: str):
     categories = []
@@ -205,9 +247,8 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     db_history = history_query.scalars().all()
 
     if db_history:
-        lesson_titles = ["Μεταβλητές & Τύποι Δεδομένων", "Δομές Ελέγχου", "Λίστες", "Επαναλήψεις", "Συναρτήσεις"]
-        idx = max(0, min(user.current_lesson_id - 1, len(lesson_titles) - 1))
-        lesson_name = lesson_titles[idx]
+        idx = max(0, min(user.current_lesson_id - 1, len(_LESSON_TITLES_DISPLAY) - 1))
+        lesson_name = _LESSON_TITLES_DISPLAY[idx]
 
         history_pairs = [(h.role, h.content) for h in db_history]
         recap = await generate_session_recap_async(history_pairs, lesson_name, user.username)
@@ -259,12 +300,14 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         user.experience_level = await classify_profile_async(request.message)
         user.profile_checked = True
 
-    # 2. Attempts Tracking
+    # 2. Attempts Tracking — μόνο για την τρέχουσα άσκηση, όχι cumulative ιστορία
     has_current_submission = bool(request.code.strip()) or "CODE_SUBMISSION" in request.message.upper()
     is_task_attempt_effective = request.is_task_attempt or has_current_submission
 
-    past_attempts = sum(h.attempts_count for h in db_history if h.attempts_count is not None)
-    current_total_attempts = past_attempts + (1 if is_task_attempt_effective else 0)
+    # Μετράμε attempts μόνο από το τελευταίο [BUTTON:START_TASK] (ή ADVANCE).
+    # Αποτρέπει ο μαθητής που αγωνίστηκε σε άσκηση Α να "κολλάει" σε repeat για πάντα λόγω
+    # σωρευτικών attempts που ακυρώνουν την καλή επίδοσή του στην άσκηση Β.
+    current_total_attempts = _count_attempts_since_last_task(db_history) + (1 if is_task_attempt_effective else 0)
 
     formatted_history = []
     for h in db_history:
@@ -278,27 +321,74 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     reset_for_next_lesson = _should_reset_for_next_lesson(db_history, request.message)
 
     effective_event_type = request.event_type
+
+    # ── Pending advance handling (LLM-based, όχι keyword matching) ──────────
+    # Το μάθημα ΔΕΝ ανεβαίνει αμέσως μετά από σωστή λύση — περιμένει επιβεβαίωση.
+    # Έτσι ο μαθητής μπορεί να ζητήσει επιπλέον άσκηση ΙΔΙΟΥ κεφαλαίου πριν προχωρήσει.
+    if user.pending_advance and not is_task_attempt_effective:
+        # Χρησιμοποιούμε LLM για να καταλάβουμε τι θέλει ο μαθητής:
+        # wants_advance | wants_more_practice | other
+        pending_intent = await classify_pending_advance_intent_async(
+            request.message,
+            lesson_title=_LESSON_TITLES_DISPLAY[max(0, min(user.current_lesson_id - 1, len(_LESSON_TITLES_DISPLAY) - 1))]
+        )
+
+        if pending_intent == "wants_advance" or reset_for_next_lesson:
+            # Ο μαθητής επιβεβαίωσε → advance τώρα
+            user.current_lesson_id += 1
+            user.pending_advance = False
+            user.active_task_lesson_id = 0
+            user.active_task_text = ""
+            user.active_success_criteria = "[]"
+            task_started = False
+            awaiting_questions = False
+            hint_count = 0
+            current_total_attempts = 0
+            effective_event_type = "lesson_advanced"
+            reset_for_next_lesson = False  # αποτρέπει διπλή εκτέλεση παρακάτω
+
+        elif pending_intent == "wants_more_practice":
+            # Ο μαθητής θέλει άλλη άσκηση στο ΙΔΙΟ κεφάλαιο → νέα χωρίς advance
+            user.pending_advance = False
+            user.active_task_lesson_id = 0  # force νέα παραλλαγή άσκησης
+            user.active_task_text = ""
+            user.active_success_criteria = "[]"
+            task_started = False
+            # Ξεχωριστό event_type για να μην μπει ο mentor στο just_advanced path
+            effective_event_type = "same_chapter_practice"
+        # else (other): ερώτηση/σχόλιο → το pending_advance παραμένει, ο mentor απαντά κανονικά
+    # ─────────────────────────────────────────────────────────────────────────
+
     if reset_for_next_lesson:
         task_started = False
         awaiting_questions = False
         hint_count = 0
         current_total_attempts = 0
-        effective_event_type = "lesson_advanced"  # Ενημερώνει τον Mentor ότι ο χρήστης μόλις πέρασε στο νέο μάθημα
-    
-    lesson_titles = ["Variables & Data Types", "Conditions", "Lists", "Loops", "Functions"]
-    idx = max(0, min(user.current_lesson_id - 1, len(lesson_titles) - 1))
+        effective_event_type = "lesson_advanced"
+
+    idx = max(0, min(user.current_lesson_id - 1, len(_LESSON_TITLES_AGENT) - 1))
     current_lesson = lessons_content.get("lessons", [])[idx] if lessons_content.get("lessons") else {}
-    lesson_name = lesson_titles[idx]
-    # Adaptive δυσκολία: expert ή beginner που λύνει συνεχώς γρήγορα → hard ασκήσεις
+    lesson_name = _LESSON_TITLES_AGENT[idx]
+
+    # ── Dynamic difficulty (probe) ────────────────────────────────────────────
+    # Χρησιμοποιούμε το αποτέλεσμα ΠΡΟΗΓΟΥΜΕΝΗΣ άσκησης (user.understanding_level)
+    # για να αποφασίσουμε αν δοκιμάσουμε διαφορετική δυσκολία αυτή τη φορά.
+    difficulty_probe_direction = user.difficulty_probe_direction or ""
+
     fast_solver = (
         int(user.solved_tasks or 0) >= 3 and
-        float(user.avg_time_spent or 0.0) < 30.0  # μέσος χρόνος < 30 δευτ. ανά άσκηση
+        float(user.avg_time_spent or 0.0) < 30.0
     )
-    task_difficulty = (
-        "easy" if current_total_attempts >= 3
-        else "hard" if (user.experience_level == "expert" or fast_solver)
-        else "easy"
-    )
+    if difficulty_probe_direction == "upgrade":
+        task_difficulty = "hard"   # δοκιμαστική hard άσκηση για πιθανή αναβάθμιση
+    elif difficulty_probe_direction == "downgrade":
+        task_difficulty = "easy"   # εύκολες ασκήσεις για ανάκαμψη
+    elif current_total_attempts >= 3:
+        task_difficulty = "easy"
+    elif user.experience_level == "expert" or fast_solver:
+        task_difficulty = "hard"
+    else:
+        task_difficulty = "easy"
     active_task_matches_lesson = (
         user.active_task_lesson_id == user.current_lesson_id
         and bool((user.active_task_text or "").strip())
@@ -345,28 +435,34 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         "understanding_level": user.understanding_level or "developing",
         "awaiting_questions": awaiting_questions,
         "is_first_login": is_first_login,
-        "profile_checked": user.profile_checked
+        "profile_checked": user.profile_checked,
+        "difficulty_probe_direction": difficulty_probe_direction,
     }
 
     output = {}
+    raw_response = None  # η ακατέργαστη απάντηση με εσωτερικά tokens (αποθηκεύεται στο DB)
     try:
         output = await asyncio.wait_for(
             langgraph_app.ainvoke(state, config={"recursion_limit": 15}),
             timeout=60
         )
         raw_response = output["messages"][-1].content
+        # Αφαιρούμε [HINT] και [AWAITING_QUESTIONS] ΜΟΝΟ από την απάντηση προς τον χρήστη.
+        # Στο DB αποθηκεύουμε raw_response ώστε να λειτουργούν σωστά τα
+        # _infer_awaiting_questions (ψάχνει [AWAITING_QUESTIONS]) και _count_hints (ψάχνει [HINT]).
         ai_response = re.sub(r'\n?\[(HINT|AWAITING_QUESTIONS)\]', '', raw_response).strip()
         assessment_score = int(output.get("assessment_score", 0) or 0)
         assessment_decision = output.get("assessment_decision", "repeat")
         understanding_level = output.get("understanding_level", "developing")
         debug_report_output = output.get("debug_report", "")
         is_correct_final = bool(output.get("is_correct", False)) and assessment_score >= MIN_PASS_SCORE and assessment_decision == "advance"
-            
+
     except Exception:
         if effective_event_type == "no_submission_timeout":
             ai_response = "Μην ανησυχείς αν δυσκολεύεσαι λίγο — αυτό είναι φυσιολογικό! Πάρε λίγο χρόνο και δοκίμασε να γράψεις έστω και μια γραμμή. 💡"
         else:
             ai_response = "Ωχ, κάτι με δυσκόλεψε στη σύνδεση. Μπορείς να ξαναδοκιμάσεις;"
+        raw_response = ai_response  # δεν υπάρχουν tokens να διατηρήσουμε στο error path
         is_correct_final = False
         assessment_score = 0
         assessment_decision = "repeat"
@@ -402,7 +498,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         new_solved = solved_so_far + 1
         user.avg_time_spent = ((avg_so_far * solved_so_far) + max(request.time_spent, 0.0)) / new_solved
         user.solved_tasks = new_solved
-    
+
     # Σωστή λύση αλλά assessment_decision != "advance" (support/repeat):
     # μηδενίζουμε active_task ώστε η επόμενη wants_task να δώσει νέα παραλλαγή άσκησης
     if is_task_attempt_effective and not is_correct_final and bool(output.get("is_correct", False)):
@@ -410,9 +506,39 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         user.active_task_text = ""
         user.active_success_criteria = "[]"
 
+    # ── Dynamic difficulty probe update ──────────────────────────────────────
+    if is_task_attempt_effective:
+        if is_correct_final:
+            if difficulty_probe_direction == "upgrade":
+                # Η hard δοκιμαστική άσκηση πέρασε → μόνιμη αναβάθμιση σε expert
+                user.experience_level = "expert"
+                user.difficulty_probe_direction = ""
+            elif difficulty_probe_direction == "downgrade" and understanding_level in {"strong", "good"}:
+                # Ο μαθητής ανέκαμψε από εύκολες ασκήσεις → καθαρίζουμε το probe
+                user.difficulty_probe_direction = ""
+            elif (difficulty_probe_direction == ""
+                  and user.experience_level == "beginner"
+                  and understanding_level == "strong"
+                  and int(user.solved_tasks or 0) >= 2):
+                # Beginner λύνει όλα γρήγορα → δοκιμαστική hard άσκηση επόμενη φορά
+                user.difficulty_probe_direction = "upgrade"
+        else:
+            # Αποτυχία
+            if difficulty_probe_direction == "upgrade":
+                # Η hard άσκηση ήταν πολύ δύσκολη → επιστροφή στο κανονικό
+                user.difficulty_probe_direction = ""
+            elif (difficulty_probe_direction == ""
+                  and user.experience_level == "expert"
+                  and understanding_level == "needs_support"):
+                # Expert δυσκολεύεται → probe με εύκολες ασκήσεις
+                user.difficulty_probe_direction = "downgrade"
+    # ─────────────────────────────────────────────────────────────────────────
+
     if is_correct_final:
         if TOTAL_LESSONS and user.current_lesson_id >= TOTAL_LESSONS:
+            # Τελευταίο μάθημα → advance αμέσως, ολοκλήρωση προγράμματος
             user.current_lesson_id = TOTAL_LESSONS + 1
+            user.pending_advance = False
             course_completed = True
             ai_response = (
                 "Συγχαρητήρια! Ολοκλήρωσες επιτυχώς όλα τα διαθέσιμα μαθήματα. "
@@ -422,12 +548,16 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             user.active_task_text = ""
             user.active_success_criteria = "[]"
         else:
-            user.current_lesson_id += 1
-            user.active_task_lesson_id = 0
+            # ΔΕΝ ανεβάζουμε αμέσως — περιμένουμε επιβεβαίωση ή "αλλη ασκηση"
+            user.pending_advance = True
+            user.active_task_lesson_id = 0  # νέα παραλλαγή αν ζητήσει επιπλέον άσκηση
             user.active_task_text = ""
             user.active_success_criteria = "[]"
+            # current_lesson_id παραμένει ίδιο μέχρι επιβεβαίωση
 
-    db.add(ChatHistory(user_id=user.id, role="ai", content=ai_response))
+    # Αποθηκεύουμε raw_response (με εσωτερικά tokens) ώστε οι helper functions να μπορούν
+    # να εντοπίζουν [AWAITING_QUESTIONS], [HINT], [ASSESSMENT:*] κλπ. στο ιστορικό.
+    db.add(ChatHistory(user_id=user.id, role="ai", content=raw_response))
 
     # code_was_correct: True όταν ο κώδικας ήταν σωστός (ακόμα κι αν decision="repeat").
     # Χρησιμοποιείται από το frontend για να κλειδώσει τον editor μόλις η άσκηση λυθεί.

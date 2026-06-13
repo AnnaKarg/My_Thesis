@@ -31,12 +31,16 @@ class _Analyzer(ast.NodeVisitor):
         self.has_index = False
         self.has_list = False
         self.has_print = False
+        self.print_overwritten = False  # True αν ο μαθητής έγραψε print = (...) αντί print(...)
         self.quoted_number_vars = []
 
     def visit_Assign(self, node):
         for target in node.targets:
             if isinstance(target, ast.Name):
                 self.assigned.add(target.id)
+                if target.id == "print":
+                    # Κοινό λάθος αρχαρίων: print = (x, y) αντί για print(x, y)
+                    self.print_overwritten = True
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             candidate = node.value.value.strip()
             if candidate.replace(".", "", 1).isdigit():
@@ -128,8 +132,13 @@ def _deterministic_findings(tree, success_criteria):
         findings.append("Απουσία πρόσβασης με index ενώ ζητείται.")
 
     if ("τύπων" in criteria_text or "print" in criteria_text) and not analyzer.has_print:
-        categories.add("missing_output")
-        findings.append("Απουσία print() ενώ ζητείται output.")
+        if analyzer.print_overwritten:
+            # Ειδικό λάθος: print = (...) αντί print(...)
+            categories.add("print_as_variable")
+            findings.append("print_as_variable: ο μαθητής έγραψε 'print = (...)' αντί 'print(...)'.")
+        else:
+            categories.add("missing_output")
+            findings.append("Απουσία print() ενώ ζητείται output.")
 
     if ("αριθμη" in criteria_text or "χωρίς εισαγωγικά" in criteria_text) and analyzer.quoted_number_vars:
         categories.add("type_mismatch")
@@ -148,8 +157,13 @@ def _semantic_analysis(student_code: str, success_criteria, current_task: str) -
         f"Εκφώνηση: {current_task}\n"
         f"Κριτήρια: {criteria_text}\n"
         f"Κώδικας μαθητή:\n{student_code}\n\n"
-        f"Ελέγξε αν ο κώδικας ικανοποιεί τα κριτήρια σημασιολογικά. "
-        f"Αν βρεις πρόβλημα, γράψε 1 σύντομη πρόταση. Αν είναι σωστός, γράψε μόνο: OK\n\nΑνάλυση:"
+        f"Ελέγξε αν ο κώδικας ικανοποιεί τα ζητούμενα της εκφώνησης σημασιολογικά.\n"
+        f"Έλεγξε ΕΙΔΙΚΑ:\n"
+        f"- Αν οι τιμές που τυπώνονται (print) ταιριάζουν ΑΚΡΙΒΩΣ με αυτές της εκφώνησης (κεφαλαία/μικρά, ορθογραφία)\n"
+        f"- Αν η λογική των if/elif/else κλάδων είναι αντεστραμμένη (π.χ. τυπώνει 'High' αντί 'Low')\n"
+        f"- Αν μια συνθήκη ελέγχει λάθος τιμή ή χρησιμοποιεί λάθος τελεστή (>, <, >=, <=)\n"
+        f"Αν βρεις ΟΠΟΙΟΔΗΠΟΤΕ από αυτά τα προβλήματα, γράψε 1 σύντομη πρόταση που περιγράφει ΤΙ ακριβώς είναι λάθος.\n"
+        f"Αν ο κώδικας είναι πλήρως σωστός, γράψε ΜΟΝΟ: OK\n\nΑνάλυση:"
     )
     try:
         result = llm_debugger.invoke(prompt)
@@ -172,8 +186,13 @@ def debugging_node(state):
     try:
         tree = ast.parse(student_code)
     except SyntaxError as e:
+        # Συγκεκριμένη ανίχνευση: 'else if' αντί για 'elif' — κοινό λάθος αρχαρίων
+        if re.search(r'\belse\s+if\b', student_code):
+            return {
+                "debug_report": "[DEBUG: ERROR] else_if_error"
+            }
         return {
-            "debug_report": f"[DEBUG: ERROR] Συντακτικό λάθος στη γραμμή {e.lineno}: {e.msg}."
+            "debug_report": f"[DEBUG: ERROR] Συντακτικό λάθος: {e.msg} (γραμμή {e.lineno})."
         }
 
     findings, categories = _deterministic_findings(tree, success_criteria)

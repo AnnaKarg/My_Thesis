@@ -31,4 +31,5 @@ class AgentState(TypedDict): # Ορισμός της δομής του state τ�
     assessment_decision: str
     understanding_level: str
 
-    is_first_login: bool 
+    is_first_login: bool
+    difficulty_probe_direction: str  # "" | "upgrade" | "downgrade"
