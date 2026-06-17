@@ -33,8 +33,11 @@ MIN_PASS_SCORE = 80
 # Αποφεύγουμε δύο ανεξάρτητες hardcoded λίστες που μπορούν να αποσυγχρονιστούν.
 _LESSON_TITLES_DISPLAY = [l.get("title", f"Μάθημα {l.get('id',i+1)}")
                            for i, l in enumerate(lessons_content.get("lessons", []))]
-# Σύντομα αγγλικά ονόματα για το agent state (χρησιμοποιούνται από τον Assessor)
-_LESSON_TITLES_AGENT  = ["Variables & Data Types", "Conditions", "Lists", "Loops", "Functions"]
+# Σύντομα αγγλικά ονόματα για το agent state — αντλούνται αυτόματα από lessons.json (agent_title)
+_LESSON_TITLES_AGENT = [
+    l.get("agent_title", l.get("title", f"Lesson {l.get('id', i+1)}"))
+    for i, l in enumerate(lessons_content.get("lessons", []))
+]
 
 class UserAuth(BaseModel): # Σχήμα για τα δεδομένα αυθεντικοποίησης που λαμβάνονται από το frontend
     username: str
@@ -69,7 +72,7 @@ def _build_welcome_message(username: str, db_history, current_lesson_id: int) ->
     idx = max(0, min(current_lesson_id - 1, len(_LESSON_TITLES_DISPLAY) - 1))
     lesson_name = _LESSON_TITLES_DISPLAY[idx]
 
-    recent_human = [h.content for h in db_history if h.role == "human" and not _is_code_submission_message(h.content)]
+    recent_human = [h.content for h in db_history if h.role == "human" and not _is_code_submission_message(h.content) and not (h.content or "").startswith("__NO_SUBMISSION_TIMEOUT__")]
     last_user_topic = recent_human[-1] if recent_human else "στην εισαγωγή μας"
     
     return (
@@ -101,7 +104,7 @@ def _count_hints(db_history) -> int:
     for h in reversed(db_history):
         if h.role == "ai":
             content = h.content or ""
-            if "[BUTTON:START_TASK]" in content or "[ASSESSMENT:ADVANCE]" in content:
+            if "[BUTTON:START_TASK]" in content or "[BUTTON:CONTINUE_TASK]" in content or "[ASSESSMENT:ADVANCE]" in content:
                 break  # αρχή τρέχουσας άσκησης — σταματάμε
             if "[HINT]" in content:
                 count += 1
@@ -114,7 +117,7 @@ def _count_attempts_since_last_task(db_history) -> int:
     for h in reversed(db_history):
         if h.role == "ai":
             content = h.content or ""
-            if "[BUTTON:START_TASK]" in content or "[ASSESSMENT:ADVANCE]" in content:
+            if "[BUTTON:START_TASK]" in content or "[BUTTON:CONTINUE_TASK]" in content or "[ASSESSMENT:ADVANCE]" in content:
                 break  # αρχή τρέχουσας άσκησης — μετράμε μόνο από εδώ και μετά
         elif h.role == "human" and (h.attempts_count or 0) > 0:
             count += h.attempts_count
@@ -150,7 +153,8 @@ def _should_reset_for_next_lesson(db_history, user_message: str) -> bool:
         "προχωράμε", "προχωραμε", "προχωράμε.", "προχωραμε.",
         "πάμε", "παμε", "next", "επόμενο", "επομενο",
         "εντάξει", "εντάξει!", "εντάξει.", "εντάξει,", "εντάξει;",
-        "τέλεια", "τελεια", "συνεχίζουμε", "συνεχιζουμε", "ας πάμε", "ας παμε"
+        "τέλεια", "τελεια", "συνεχίζουμε", "συνεχιζουμε", "ας πάμε", "ας παμε",
+        "ειμαι", "είμαι", "ετοιμος", "έτοιμος", "ετοιμη", "έτοιμη"
     ])
     if not affirmative:
         return False
@@ -161,7 +165,8 @@ def _extract_debug_categories(debug_report: str):
     categories = []
     marker = "[DEBUG:CATEGORIES]"
     if marker in (debug_report or ""):
-        tail = debug_report.split(marker, 1)[1].splitlines()[0]
+        lines = debug_report.split(marker, 1)[1].splitlines()
+        tail = lines[0] if lines else ""
         categories = [c.strip() for c in tail.split(",") if c.strip()]
     return categories
 
@@ -297,8 +302,12 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     # 1. Profile Check Logic (Beginner vs Expert) — LLM-based classification
     is_first_login = len(db_history) == 0
     if not user.profile_checked:
-        user.experience_level = await classify_profile_async(request.message)
-        user.profile_checked = True
+        profile_result = await classify_profile_async(request.message)
+        if profile_result != "unclear":
+            # Ξεκάθαρη απάντηση → κλειδώνουμε το profile
+            user.experience_level = profile_result
+            user.profile_checked = True
+        # αν "unclear" (gibberish): profile_checked παραμένει False → mentor ξαναρωτά
 
     # 2. Attempts Tracking — μόνο για την τρέχουσα άσκηση, όχι cumulative ιστορία
     has_current_submission = bool(request.code.strip()) or "CODE_SUBMISSION" in request.message.upper()
@@ -431,12 +440,13 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         "hint_count": hint_count,
         "assessment_feedback": "",
         "assessment_score": 0,
-        "assessment_decision": "" if reset_for_next_lesson else (user.last_assessment_decision or "repeat"),
+        "assessment_decision": "repeat" if reset_for_next_lesson else (user.last_assessment_decision or "repeat"),
         "understanding_level": user.understanding_level or "developing",
         "awaiting_questions": awaiting_questions,
         "is_first_login": is_first_login,
         "profile_checked": user.profile_checked,
         "difficulty_probe_direction": difficulty_probe_direction,
+        "avg_hints_per_task": float(user.avg_hints_per_task or 0.0),
     }
 
     output = {}
@@ -498,6 +508,10 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         new_solved = solved_so_far + 1
         user.avg_time_spent = ((avg_so_far * solved_so_far) + max(request.time_spent, 0.0)) / new_solved
         user.solved_tasks = new_solved
+        # Rolling avg: πόσα hints χρειάστηκε αυτός ο μαθητής ανά άσκηση
+        user.avg_hints_per_task = (
+            (float(user.avg_hints_per_task or 0.0) * solved_so_far + hint_count) / new_solved
+        )
 
     # Σωστή λύση αλλά assessment_decision != "advance" (support/repeat):
     # μηδενίζουμε active_task ώστε η επόμενη wants_task να δώσει νέα παραλλαγή άσκησης

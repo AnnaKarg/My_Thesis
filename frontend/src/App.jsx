@@ -5,6 +5,8 @@ import ReactMarkdown from 'react-markdown';
 import { Send, Code2, Play, LogOut, Eye, EyeOff } from 'lucide-react';
 import './App.css';
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 export default function App() {
   const [user, setUser] = useState(JSON.parse(localStorage.getItem('python_user_data')) || null);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -28,6 +30,7 @@ export default function App() {
   // (το state δεν διαβάζεται σωστά μέσα σε stale closures setTimeout)
   const loadingRef = useRef(false);
   const chatEndRef = useRef(null);
+  const monacoEditorRef = useRef(null);
 
   const startButtonToken = '[BUTTON:START_TASK]';
   const legacyStartButtonToken = '[BUTTON:CONTINUE_TASK]';
@@ -36,7 +39,6 @@ export default function App() {
     text
       .replace(startButtonToken, '')
       .replace(legacyStartButtonToken, '')
-      .replace('[ACTIVATE_EDITOR]', '')
       .replace('[ASSESSMENT:ADVANCE]', '')
       .replace('[ASSESSMENT:REPEAT]', '')
       .replace('[ASSESSMENT:SUPPORT]', '');
@@ -56,7 +58,7 @@ export default function App() {
   const bootstrapSession = async (targetUser) => {
     if (!targetUser?.id) return;
     try {
-      const res = await axios.get(`http://127.0.0.1:8000/session/${targetUser.id}/welcome`);
+      const res = await axios.get(`${API_BASE}/session/${targetUser.id}/welcome`);
       setMessages([{ role: 'ai', content: res.data.message }]);
     } catch (err) {
       setMessages([{ role: 'ai', content: `Γεια σου ${targetUser.username}! Πριν συνεχίσουμε, έχεις κάποια απορία;` }]);
@@ -87,7 +89,7 @@ export default function App() {
     }
 
     try {
-      const res = await axios.post(`http://127.0.0.1:8000/${endpoint}`, payload);
+      const res = await axios.post(`${API_BASE}/${endpoint}`, payload);
       if (isRegistering) {
         setRegisterSuccessModal(true);
         setIsRegistering(false);
@@ -129,7 +131,12 @@ export default function App() {
     setTaskActive(true);
     setHintStage(0);
     setLastActivityTime(now);
-    setCode('# Γράψε τον κώδικά σου εδώ...');
+    const resetComment = '# Γράψε τον κώδικά σου εδώ...';
+    setCode(resetComment);
+    // Καθαρίζουμε τον editor χωρίς να επηρεαστεί η θέση cursor (uncontrolled mode)
+    if (monacoEditorRef.current) {
+      monacoEditorRef.current.setValue(resetComment);
+    }
   };
 
   const requestNoSubmissionHint = async (stage) => {
@@ -142,7 +149,7 @@ export default function App() {
     const elapsedSeconds = startTime ? Math.max(0, (Date.now() - startTime) / 1000) : 0;
 
     try {
-      const res = await axios.post(`http://127.0.0.1:8000/chat/${user.id}`, {
+      const res = await axios.post(`${API_BASE}/chat/${user.id}`, {
         message: '__NO_SUBMISSION_TIMEOUT__',
         code: '',
         time_spent: elapsedSeconds,
@@ -186,9 +193,12 @@ export default function App() {
     loadingRef.current = true;
     setLoading(true);
     if (!overrideMessage) setChatInput('');
+    // Επαναφορά timer υπόδειξης όταν ο μαθητής στέλνει μήνυμα chat
+    // (αποτρέπει αυτόματα hints να εμφανίζονται ενώ ο μαθητής κάνει ερωτήσεις)
+    if (taskActive) setLastActivityTime(Date.now());
 
     try {
-      const res = await axios.post(`http://127.0.0.1:8000/chat/${user.id}`, {
+      const res = await axios.post(`${API_BASE}/chat/${user.id}`, {
         message: textToSend,
         code: "",
         time_spent: 0,
@@ -205,7 +215,8 @@ export default function App() {
     setLoading(true);
     setHintStage(HINT_DELAYS.length); // παύση timer κατά τη διάρκεια της υποβολής
     const timeSpent = startTime ? (Date.now() - startTime) / 1000 : 0;
-    const codeToSubmit = typeof code === 'string' ? code : '';
+    // Χρησιμοποιούμε το ref για αξιόπιστη ανάγνωση (uncontrolled editor)
+    const codeToSubmit = monacoEditorRef.current ? monacoEditorRef.current.getValue() : (typeof code === 'string' ? code : '');
     const submissionMessage = codeToSubmit.trim()
       ? `Υποβολή κώδικα:\n\`\`\`python\n${codeToSubmit}\n\`\`\``
       : 'Υποβολή κώδικα';
@@ -213,7 +224,7 @@ export default function App() {
     setMessages(prev => [...prev, { role: 'human', content: submissionMessage }]);
 
     try {
-      const res = await axios.post(`http://127.0.0.1:8000/chat/${user.id}`, {
+      const res = await axios.post(`${API_BASE}/chat/${user.id}`, {
         message: "CODE_SUBMISSION",
         code: codeToSubmit,
         time_spent: timeSpent,
@@ -372,6 +383,7 @@ export default function App() {
             value={chatInput} onChange={e => setChatInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && sendChatMessage()}
             placeholder="Γράψε εδώ..."
+            autoComplete="off"
           />
           <button onClick={() => sendChatMessage()} style={{ background: '#007acc', border: 'none', padding: '14px 16px', borderRadius: '10px' }}>
             <Send size={22} color="white" />
@@ -412,16 +424,21 @@ export default function App() {
           </div>
           <div style={{ flex: 1, position: 'relative' }}>
             <Editor
+              onMount={(editor) => { monacoEditorRef.current = editor; }}
               height="100%"
               theme="vs-dark"
               defaultLanguage="python"
-              value={code}
+              defaultValue="# Γράψε τον κώδικά σου εδώ..."
               onChange={(value) => editorEnabled && setCode(value ?? '')}
               options={{
                 fontSize: 16,
                 readOnly: !editorEnabled,
                 cursorStyle: editorEnabled ? 'line' : 'block',
                 renderLineHighlight: editorEnabled ? 'line' : 'none',
+                quickSuggestions: false,
+                suggestOnTriggerCharacters: false,
+                acceptSuggestionOnEnter: 'off',
+                wordBasedSuggestions: 'off',
               }}
             />
             {!editorEnabled && (

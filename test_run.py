@@ -46,6 +46,7 @@ def test_logic():
         "event_type": "",
         "is_first_login": False,
         "difficulty_probe_direction": "",
+        "avg_hints_per_task": 0.0,
     }
 
     print("--- Ξεκινάει ο έλεγχος του Graph ---")

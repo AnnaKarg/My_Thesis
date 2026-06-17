@@ -40,6 +40,8 @@ async def init_db(): # Συνάρτηση για την αρχικοποίηση
             await conn.execute(text("ALTER TABLE users ADD COLUMN pending_advance BOOLEAN NOT NULL DEFAULT 0"))
         if "difficulty_probe_direction" not in columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN difficulty_probe_direction VARCHAR NOT NULL DEFAULT ''"))
+        if "avg_hints_per_task" not in columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN avg_hints_per_task FLOAT NOT NULL DEFAULT 0.0"))
 
         # Index στο chat_histories.user_id για γρήγορη αναζήτηση ιστορικού ανά χρήστη
         await conn.execute(text(

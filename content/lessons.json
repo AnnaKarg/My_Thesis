@@ -7,8 +7,9 @@
     {
       "id": 1,
       "title": "Μεταβλητές & Τύποι Δεδομένων",
+      "agent_title": "Variables & Data Types",
       "detailed_theory": {
-        "easy": "Μια μεταβλητή είναι σαν κουτί με ετικέτα — της δίνεις ένα όνομα και αποθηκεύεις μια τιμή.\n\n**Σύνταξη:**\n```python\nόνομα = τιμή\n```\n\n**Παραδείγματα:**\n```python\nname = \"Anna\"   # κείμενο (str)\nage = 20        # ακέραιος αριθμός (int)\nprice = 9.99    # δεκαδικός (float)\n```\n\n**Κανόνες ονομάτων:**\n- Ξεκινά με γράμμα (π.χ. `my_score`, `age`, `user_name`)\n- Χωρίς κενά — χρησιμοποίησε `_` αντί για κενό (π.χ. `first_name`)\n- Δεν επιτρέπονται κρατημένες λέξεις (`if`, `for`, `while`…)\n\n**Τρεις βασικοί τύποι:**\n- **str** → κείμενο πάντα σε εισαγωγικά: `\"Athens\"`\n- **int** → ακέραιος χωρίς εισαγωγικά: `42`\n- **float** → δεκαδικός χωρίς εισαγωγικά: `3.14`\n\n⚠️ **Πολύ συχνό λάθος:**\n```python\nage = \"25\"  # ✗ αριθμός μέσα σε εισαγωγικά → είναι string!\nage = 25    # ✓ σωστό int\n```\n\n**Εμφάνιση τιμής:**\n```python\nprint(name)   # → Anna\nprint(age)    # → 20\n```",
+        "easy": "Μια μεταβλητή είναι σαν κουτί με ετικέτα — της δίνεις ένα όνομα και αποθηκεύεις μια τιμή.\n\n**Σύνταξη:**\n```python\nόνομα = τιμή\n```\n\n**Παραδείγματα:**\n```python\nname = \"Anna\"   # κείμενο (str)\nage = 20        # ακέραιος αριθμός (int)\nprice = 9.99    # δεκαδικός (float)\n```\n\n**Κανόνες ονομάτων:**\n- Ξεκινά με γράμμα (π.χ. `my_score`, `age`, `user_name`)\n- Χωρίς κενά — χρησιμοποίησε `_` αντί για κενό (π.χ. `first_name`)\n- Δεν επιτρέπονται κρατημένες λέξεις (`if`, `for`, `while`…)\n\n**Τρεις βασικοί τύποι:**\n- **str** → κείμενο πάντα σε εισαγωγικά: `\"Athens\"`\n- **int** → ακέραιος χωρίς εισαγωγικά: `42`\n- **float** → δεκαδικός χωρίς εισαγωγικά: `3.14`\n\n⚠️ **Πολύ συχνό λάθος:**\n```python\nage = \"25\"  # ✗ αριθμός μέσα σε εισαγωγικά → είναι string!\nage = 25    # ✓ σωστό int\n```\n\n**Εμφάνιση τιμής:**\n```python\nprint(name)           # → Anna  (εκτύπωση μεταβλητής)\nprint(age)            # → 20\nprint(\"Hello!\")       # → Hello!  (απευθείας κείμενο)\nprint(\"Όνομα:\", name) # → Όνομα: Anna  (κείμενο + μεταβλητή μαζί)\n```",
         "hard": "Η Python είναι δυναμικά τυποποιημένη — ο τύπος μεταβλητής καθορίζεται αυτόματα από την τιμή.\n\n**Κύριοι τύποι:**\n```python\nfirst_name = \"Anna\"   # str\nage = 25              # int\nheight = 1.75         # float\nis_active = True      # bool\nresult = None         # NoneType\n```\n\n**Έλεγχος & μετατροπή τύπου:**\n```python\nprint(type(age))        # → <class 'int'>\nnum_str = \"42\"\nnum = int(num_str)      # str → int\ntxt = str(num)          # int → str\ndecimal = float(num)    # int → float\n```\n\n**Πολλαπλή ανάθεση & snake_case:**\n```python\nx, y = 10, 20           # πολλαπλή ανάθεση\nfirst_name = \"Anna\"     # ✓ snake_case\nfirstName  = \"Anna\"     # ✗ όχι Python-style\n```\n\n**Αριθμητικές πράξεις:**\n```python\nresult = (5 + 3) * 2   # = 16\nmod    = 10 % 3        # = 1  (υπόλοιπο)\npower  = 2 ** 8        # = 256\n```\n\n⚠️ Δεν μπορείς να κάνεις πράξη μεταξύ str και int — θα πάρεις `TypeError`."
       },
       "task_templates": {
@@ -48,8 +49,9 @@
     {
       "id": 2,
       "title": "Δομές Ελέγχου",
+      "agent_title": "Conditions",
       "detailed_theory": {
-        "easy": "Με το `if` ελέγχουμε αν ισχύει μια συνθήκη και εκτελούμε κώδικα ανάλογα.\n\n**Σύνταξη:**\n```python\nif συνθήκη:\n    εντολή   # ← ΥΠΟΧΡΕΩΤΙΚΗ εσοχή (4 κενά)\nelse:\n    άλλη εντολή\n```\n\n**Παράδειγμα:**\n```python\nage = 18\nif age >= 18:\n    print(\"Ενήλικας\")\nelse:\n    print(\"Ανήλικας\")\n```\n\n**Τελεστές σύγκρισης:**\n- `==` ίσο με &nbsp;&nbsp;&nbsp; `!=` διαφορετικό\n- `>` μεγαλύτερο &nbsp; `<` μικρότερο\n- `>=` μεγαλύτερο ή ίσο &nbsp; `<=` μικρότερο ή ίσο\n\n⚠️ `==` σύγκριση vs `=` ανάθεση!",
+        "easy": "Με το `if` ελέγχουμε αν ισχύει μια συνθήκη και εκτελούμε κώδικα ανάλογα.\n\n**Σύνταξη:**\n```python\nif συνθήκη:\n    εντολή   # ← ΥΠΟΧΡΕΩΤΙΚΗ εσοχή (4 κενά)\nelse:\n    άλλη εντολή\n```\n\n**Παράδειγμα:**\n```python\nage = 18\nif age >= 18:\n    print(\"Ενήλικας\")\nelse:\n    print(\"Ανήλικας\")\n```\n\n**Τελεστές σύγκρισης:**\n- `==` ίσο με &nbsp;&nbsp;&nbsp; `!=` διαφορετικό\n- `>` μεγαλύτερο &nbsp; `<` μικρότερο\n- `>=` μεγαλύτερο ή ίσο &nbsp; `<=` μικρότερο ή ίσο\n\n⚠️ `==` σύγκριση vs `=` ανάθεση!\n\n**Λογικοί τελεστές:**\n- `and` → ισχύουν **και** τα δύο\n- `or` → ισχύει **τουλάχιστον ένα**\n\n```python\nx = 15\nif x > 10 and x < 20:\n    print(\"Στο εύρος\")\n\nif x < 5 or x > 10:\n    print(\"Εκτός 5-10\")\n```",
         "hard": "Για παραπάνω από δύο περιπτώσεις χρησιμοποιούμε `elif`.\n\n**Παράδειγμα:**\n```python\nscore = 75\nif score >= 90:\n    print(\"Άριστα\")\nelif score >= 70:\n    print(\"Καλά\")\nelif score >= 50:\n    print(\"Μέτρια\")\nelse:\n    print(\"Αποτυχία\")\n```\n\n**Λογικοί τελεστές:**\n```python\n# and — ισχύουν ΚΑΙ τα δύο\nif age >= 18 and has_id:\n    print(\"Επιτρέπεται\")\n\n# or — ισχύει ΤΟΥΛΑΧΙΣΤΟΝ ένα\nif is_admin or is_owner:\n    print(\"Πρόσβαση\")\n\n# not — άρνηση\nif not is_banned:\n    print(\"Καλώς ήρθες\")\n```\n\n**Φωλιασμένο if:**\n```python\nif x > 0:\n    if x < 100:\n        print(\"Στο εύρος 1-99\")\n```"
       },
       "task_templates": {
@@ -85,6 +87,7 @@
     {
       "id": 3,
       "title": "Λίστες",
+      "agent_title": "Lists",
       "detailed_theory": {
         "easy": "Μια λίστα αποθηκεύει πολλές τιμές σε μία μεταβλητή, σε συγκεκριμένη σειρά.\n\n**Δημιουργία:**\n```python\nfruits = [\"apple\", \"banana\", \"cherry\"]\nnumbers = [10, 20, 30]\n```\n\n**Πρόσβαση με index** (αρχίζει από 0!):\n```python\nprint(fruits[0])   # → apple  (πρώτο)\nprint(fruits[1])   # → banana (δεύτερο)\nprint(fruits[-1])  # → cherry (τελευταίο)\n```\n\n**Μέγεθος λίστας:**\n```python\nprint(len(fruits))  # → 3\n```\n\nΗ λίστα μπορεί να έχει τιμές διαφορετικών τύπων:\n```python\nmixed = [\"Alice\", 25, True, 9.5]\n```",
         "hard": "**Βασικές μέθοδοι λιστών:**\n\n```python\n# Προσθήκη στοιχείου\nfruits.append(\"mango\")     # προσθέτει στο τέλος\nfruits.insert(1, \"grape\")  # εισάγει στη θέση 1\n\n# Αφαίρεση\nfruits.remove(\"banana\")    # αφαιρεί κατά τιμή\ndel fruits[0]               # αφαιρεί κατά index\npopped = fruits.pop()       # αφαιρεί & επιστρέφει το τελευταίο\n\n# Αναζήτηση\nif \"apple\" in fruits:\n    print(\"Υπάρχει!\")\n\n# Τεμαχισμός (slicing)\nfirst_two = fruits[0:2]    # [\"apple\", \"banana\"]\nreversed_l = fruits[::-1]  # αντεστραμμένη λίστα\n\n# Μέγεθος\nprint(len(fruits))         # αριθμός στοιχείων\n```"
@@ -114,13 +117,14 @@
           "Η λίστα δηλώνεται σωστά με [] και έχει τουλάχιστον ένα στοιχείο.",
           "Χρησιμοποιείται append() για προσθήκη στοιχείου στη λίστα.",
           "Χρησιμοποιείται print() για εκτύπωση αποτελέσματος.",
-          "Χρησιμοποιείται index [0] ή [-1] ή len() για πρόσβαση σε στοιχείο."
+          "Χρησιμοποιείται len() για μέτρηση του μεγέθους της λίστας."
         ]
       }
     },
     {
       "id": 4,
       "title": "Επαναλήψεις",
+      "agent_title": "Loops",
       "detailed_theory": {
         "easy": "Η `for` loop εκτελεί κώδικα για κάθε στοιχείο μιας λίστας.\n\n**Σύνταξη:**\n```python\nfor μεταβλητή in λίστα:\n    εντολή  # ← ΥΠΟΧΡΕΩΤΙΚΗ εσοχή\n```\n\n**Παράδειγμα:**\n```python\nfruits = [\"apple\", \"banana\", \"cherry\"]\nfor fruit in fruits:\n    print(fruit)\n# → apple\n# → banana\n# → cherry\n```\n\nΗ μεταβλητή `fruit` παίρνει αυτόματα κάθε τιμή της λίστας.\n\n**Επανάληψη N φορών με range():**\n```python\nfor i in range(5):\n    print(i)  # → 0, 1, 2, 3, 4\n```",
         "hard": "**range() με παραμέτρους:**\n```python\nfor i in range(1, 10, 2):   # start=1, stop=10, step=2\n    print(i)                 # → 1, 3, 5, 7, 9\n```\n\n**Αθροιστής (accumulator pattern):**\n```python\ntotal = 0\nnumbers = [1, 2, 3, 4, 5]\nfor num in numbers:\n    total += num   # total = total + num\nprint(total)       # → 15\n```\n\n**enumerate()** — index + τιμή ταυτόχρονα:\n```python\nfor i, fruit in enumerate(fruits):\n    print(i, fruit)  # 0 apple, 1 banana…\n```\n\n**while loop:**\n```python\nx = 0\nwhile x < 5:\n    print(x)\n    x += 1\n```\n⚠️ Πρόσεξε infinite loops στο `while`!"
@@ -157,6 +161,7 @@
     {
       "id": 5,
       "title": "Συναρτήσεις",
+      "agent_title": "Functions",
       "detailed_theory": {
         "easy": "Μια συνάρτηση είναι μια ομάδα εντολών με όνομα που μπορούμε να εκτελούμε ξανά και ξανά.\n\n**Ορισμός:**\n```python\ndef όνομα():\n    εντολές  # ← εσοχή\n```\n\n**Κλήση:**\n```python\nόνομα()  # εκτελεί τη συνάρτηση\n```\n\n**Παράδειγμα:**\n```python\ndef greet():\n    print(\"Καλώς ήρθατε!\")\n    print(\"Χαίρομαι που σε γνωρίζω.\")\n\ngreet()  # → Καλώς ήρθατε!\ngreet()  # → εκτελείται ξανά!\n```\n\n💡 **DRY** (Don't Repeat Yourself): αντί να γράφεις τον ίδιο κώδικα πολλές φορές, τον βάζεις σε μία συνάρτηση.",
         "hard": "**Παράμετροι** — δίνεις τιμές κατά την κλήση:\n```python\ndef greet(name):\n    print(\"Hello, \" + name)\n\ngreet(\"Anna\")  # → Hello, Anna\ngreet(\"Bob\")   # → Hello, Bob\n```\n\n**Επιστροφή τιμής με return:**\n```python\ndef add(a, b):\n    return a + b\n\nresult = add(3, 5)  # result = 8\nprint(result)\n```\n\n**Πολλαπλές παράμετροι:**\n```python\ndef power(base, exp):\n    return base ** exp\n\nprint(power(2, 8))  # → 256\n```\n\n**Προεπιλεγμένες τιμές:**\n```python\ndef greet(name, msg=\"Hello\"):\n    print(msg + \", \" + name)\n\ngreet(\"Anna\")          # → Hello, Anna\ngreet(\"Bob\", \"Hi\")    # → Hi, Bob\n```"

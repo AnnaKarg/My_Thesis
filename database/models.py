@@ -21,6 +21,9 @@ class User(Base): # Ορίζουμε το μοντέλο User που αντιπ�
     pending_advance = Column(Boolean, default=False)
     # Κατεύθυνση dynamic difficulty probe: "" | "upgrade" | "downgrade"
     difficulty_probe_direction = Column(String, default="")
+    # Κυλιόμενος μέσος όρος hints ανά άσκηση — χρησιμοποιείται για να ρυθμίζεται
+    # πόσο direct/indirect είναι οι υποδείξεις (0.0 = κανένα hint ακόμα)
+    avg_hints_per_task = Column(Float, default=0.0)
 
 class ChatHistory(Base): # Ορίζουμε το μοντέλο ChatHistory που αντιπροσωπεύει το ιστορικό συνομιλιών των χρηστών με τον Mentor
     __tablename__ = "chat_histories"

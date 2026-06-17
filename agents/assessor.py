@@ -48,7 +48,10 @@ def _generate_assessment_feedback(
         return raw_findings
 
 NUMERIC_TARGET_NAMES = {
-    "age", "score", "year", "num_var", "n1", "n2", "num", "limit", "temp", "speed", "numbers"
+    "age", "score", "year", "num_var", "n1", "n2", "num", "limit",
+    "temp", "speed", "numbers", "price", "rating", "count", "total",
+    "level", "value", "result", "x", "y", "z", "n", "sum", "avg",
+    "min_val", "max_val", "threshold", "balance", "amount", "weight", "height"
 }
 
 # Ονόματα μεταβλητών που σημασιολογικά πρέπει να έχουν string τιμή
@@ -416,7 +419,6 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
             "assessment_score": 0,
             "assessment_decision": decision,
             "understanding_level": _understanding_level(0, attempts_count, hint_count, False),
-            "result": "FAIL"
         }
 
     try:
@@ -432,7 +434,6 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
                 "assessment_score": 0,
                 "assessment_decision": decision,
                 "understanding_level": ulevel,
-                "result": "FAIL"
             }
 
         # Έλεγχος αντίστροφου τύπου: string-type μεταβλητές που πήραν αριθμητική τιμή
@@ -449,7 +450,6 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
                 "assessment_score": 0,
                 "assessment_decision": decision,
                 "understanding_level": ulevel,
-                "result": "FAIL"
             }
 
         strict_ok, strict_failures = _strict_task_matching(student_code, current_task)
@@ -464,7 +464,6 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
                 "assessment_score": 0,
                 "assessment_decision": decision,
                 "understanding_level": ulevel,
-                "result": "FAIL"
             }
 
         flags = _build_flags(student_code)
@@ -498,7 +497,6 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
             "assessment_score": score,
             "assessment_decision": decision,
             "understanding_level": ulevel,
-            "result": "PASS" if is_correct else "FAIL"
         }
     except Exception:
         return {
@@ -507,5 +505,4 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
             "assessment_score": 0,
             "assessment_decision": "repeat",
             "understanding_level": "developing",
-            "result": "FAIL"
         }

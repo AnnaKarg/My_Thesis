@@ -33,3 +33,4 @@ class AgentState(TypedDict): # Ορισμός της δομής του state τ�
 
     is_first_login: bool
     difficulty_probe_direction: str  # "" | "upgrade" | "downgrade"
+    avg_hints_per_task: float  # κυλιόμενος μέσος όρος hints ανά άσκηση — ρυθμίζει directness των hints
