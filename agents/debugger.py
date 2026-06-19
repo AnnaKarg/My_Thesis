@@ -33,6 +33,9 @@ class _Analyzer(ast.NodeVisitor):
         self.has_print = False
         self.print_overwritten = False  # True αν ο μαθητής έγραψε print = (...) αντί print(...)
         self.quoted_number_vars = []
+        self.has_len_method = False      # True αν χρησιμοποιεί λίστα.len() αντί len(λίστα)
+        self.defined_functions = set()   # ονόματα συναρτήσεων που ορίζονται με def
+        self.called_functions = set()    # ονόματα συναρτήσεων που καλούνται (εκτός builtins)
 
     def visit_Assign(self, node):
         for target in node.targets:
@@ -72,15 +75,29 @@ class _Analyzer(ast.NodeVisitor):
     def visit_FunctionDef(self, node):
         self.has_def = True
         self.assigned.add(node.name)
+        self.defined_functions.add(node.name)
         for arg in node.args.args:
             self.assigned.add(arg.arg)
         self.generic_visit(node)
+
+    _BUILTIN_CALL_NAMES = {
+        "print", "len", "int", "str", "float", "bool", "type", "range",
+        "enumerate", "list", "tuple", "dict", "set", "sorted", "reversed",
+        "sum", "min", "max", "abs", "round", "input", "open", "zip", "map",
+        "filter", "isinstance", "hasattr", "getattr", "setattr",
+    }
 
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and node.func.id == "print":
             self.has_print = True
         if isinstance(node.func, ast.Attribute) and node.func.attr == "append":
             self.has_append = True
+        # Εντοπίζει λίστα.len() — κοινό λάθος αρχαρίων (σωστό: len(λίστα))
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "len":
+            self.has_len_method = True
+        # Παρακολουθεί κλήσεις ορισμένων συναρτήσεων (για εντοπισμό "def χωρίς κλήση")
+        if isinstance(node.func, ast.Name) and node.func.id not in self._BUILTIN_CALL_NAMES:
+            self.called_functions.add(node.func.id)
         self.generic_visit(node)
 
     def visit_List(self, node):
@@ -103,6 +120,11 @@ def _deterministic_findings(tree, success_criteria):
         name for name in (analyzer.loaded - analyzer.assigned)
         if name not in BUILTIN_NAMES
     )
+    # Bug 3: λίστα.len() αντί len(λίστα)
+    if analyzer.has_len_method:
+        categories.add("method_error")
+        findings.append("Χρήση .len() ως μέθοδος — δεν υπάρχει. Χρησιμοποίησε len(λίστα) αντί για λίστα.len().")
+
     if undefined:
         categories.add("undefined_name")
         findings.append("Χρήση μεταβλητής πριν από ανάθεση: " + ", ".join(undefined))
@@ -136,6 +158,15 @@ def _deterministic_findings(tree, success_criteria):
             # Ειδικό λάθος: print = (...) αντί print(...)
             categories.add("print_as_variable")
             findings.append("print_as_variable: ο μαθητής έγραψε 'print = (...)' αντί 'print(...)'.")
+        elif (analyzer.has_def
+              and analyzer.defined_functions
+              and not (analyzer.called_functions & analyzer.defined_functions)):
+            # Bug 5: συνάρτηση ορίστηκε αλλά δεν καλείται ποτέ — αιτία του ελλείποντος print()
+            categories.add("missing_call")
+            findings.append(
+                "Συνάρτηση ορίζεται αλλά δεν καλείται ποτέ. "
+                "Πρόσθεσε κλήση έξω από τη συνάρτηση και τύπωσε το αποτέλεσμα με print()."
+            )
         else:
             categories.add("missing_output")
             findings.append("Απουσία print() ενώ ζητείται output.")

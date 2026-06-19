@@ -148,13 +148,16 @@ def _should_reset_for_next_lesson(db_history, user_message: str) -> bool:
     (δηλαδή για παλιές συνεδρίες που δεν έχουν το νέο flag).
     Για pending_advance=True χρησιμοποιείται το LLM classify_pending_advance_intent_async."""
     normalized = (user_message or "").strip().lower()
+    # Αρνητικές φράσεις ("δεν νιωθω ετοιμη", "όχι", "δε θέλω") δεν θεωρούνται επιβεβαίωση
+    if any(neg in normalized for neg in ["δεν ", "δε ", "μην ", "όχι", "οχι"]):
+        return False
     affirmative = any(word in normalized for word in [
         "ναι", "ναι.", "ναι!", "nai", "ne", "yes", "yep", "ok", "okay",
         "προχωράμε", "προχωραμε", "προχωράμε.", "προχωραμε.",
         "πάμε", "παμε", "next", "επόμενο", "επομενο",
         "εντάξει", "εντάξει!", "εντάξει.", "εντάξει,", "εντάξει;",
         "τέλεια", "τελεια", "συνεχίζουμε", "συνεχιζουμε", "ας πάμε", "ας παμε",
-        "ειμαι", "είμαι", "ετοιμος", "έτοιμος", "ετοιμη", "έτοιμη"
+        "ειμαι ετοιμ", "είμαι έτοιμ",
     ])
     if not affirmative:
         return False
