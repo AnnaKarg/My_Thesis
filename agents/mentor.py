@@ -233,9 +233,10 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
         categories = (
             "profile_yes - ο χρήστης έχει εμπειρία κώδικα "
             "(ναι, ξέρω, έχω γράψει, προχωρημένος, γνωρίζω, yes, λίγο κλπ)\n"
-            "profile_no  - ο χρήστης δεν έχει εμπειρία "
-            "(όχι, πρώτη φορά, αρχάριος, no, ποτέ κλπ)\n"
-            "other       - ακατανόητο, άσχετο ή δεν απαντά στην ερώτηση"
+            "profile_no  - ο χρήστης δεν έχει εμπειρία ή θέλει να μάθει από την αρχή "
+            "(όχι, πρώτη φορά, αρχάριος, no, ποτέ, θελω να μαθω, θέλω να ξεκινήσω, "
+            "να μαθω python, να ξεκινησω, αρχη κλπ)\n"
+            "other       - ακατανόητο, άσχετο ή δεν απαντά στην ερώτηση (π.χ. γεια σου, ok)"
         )
     elif task_started:
         context_hint = "Ο χρήστης εργάζεται πάνω σε άσκηση Python."
@@ -294,6 +295,8 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
             msg = (user_input or "").lower()
             if any(w in msg for w in ["ναι", "έχω ξαναγράψει", "γνωρίζω", "προχωρημένος", "ξέρω", "yes", "λίγο"]):
                 return "profile_yes"
+            if any(w in msg for w in ["μαθω", "μάθω", "ξεκινησω", "ξεκινήσω", "αρχαριος", "αρχάριος"]):
+                return "profile_no"
             return "profile_no"
         if _wants_to_start_task(user_input):
             return "wants_task"
@@ -592,6 +595,9 @@ async def classify_profile_async(user_input: str) -> str:
         'Μόνο η ΑΠΟΛΥΤΗ απειρία (πρώτη φορά, ποτέ, δεν ξέρω τίποτα) = beginner.\n'
         'Αν το μήνυμα δεν απαντά στην ερώτηση ή είναι ακατανόητο → unclear\n\n'
         'Παραδείγματα:\n'
+        '"θελω να μαθω python" → beginner\n'
+        '"θελω να ξεκινησω" → beginner\n'
+        '"να μαθω προγραμματισμο" → beginner\n'
         '"ναι έχω εμπειρία" → expert\n'
         '"εχω ασχοληθει γενικα με κωδικα" → expert\n'
         '"εχω δουλεψει λιγο με python" → expert\n'
