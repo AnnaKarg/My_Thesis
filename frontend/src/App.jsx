@@ -75,6 +75,14 @@ export default function App() {
     }
   }, [user]);
 
+  // Wake-up ping: μόλις εμφανιστεί το login, στέλνουμε ένα GET στο backend
+  // ώστε το Render να ξυπνήσει πριν ο χρήστης πατήσει Εγγραφή/Σύνδεση
+  useEffect(() => {
+    if (!user) {
+      axios.get(`${API_BASE}/`).catch(() => {});
+    }
+  }, []);
+
   const handleAuth = async () => {
     setAuthError('');
     const endpoint = isRegistering ? 'register' : 'login';
@@ -88,7 +96,7 @@ export default function App() {
       return;
     }
 
-    try {
+    const attemptAuth = async () => {
       const res = await axios.post(`${API_BASE}/${endpoint}`, payload);
       if (isRegistering) {
         setRegisterSuccessModal(true);
@@ -99,6 +107,10 @@ export default function App() {
         setUser(res.data);
         localStorage.setItem('python_user_data', JSON.stringify(res.data));
       }
+    };
+
+    try {
+      await attemptAuth();
     } catch (err) {
       const status = err.response?.status;
       if (status === 401) {
@@ -106,7 +118,19 @@ export default function App() {
       } else if (status === 400 && isRegistering) {
         setAuthError('Το όνομα χρήστη υπάρχει ήδη. Δοκίμασε διαφορετικό.');
       } else {
-        setAuthError('Σφάλμα σύνδεσης με τον server. Δοκίμασε ξανά.');
+        // Network error (π.χ. Render cold start) — auto-retry μία φορά μετά από 8s
+        setAuthError('Ο server εκκινεί... επαναλαμβάνεται αυτόματα σε λίγο.');
+        setTimeout(async () => {
+          try {
+            await attemptAuth();
+            setAuthError('');
+          } catch (err2) {
+            const s2 = err2.response?.status;
+            if (s2 === 401) setAuthError('Λάθος όνομα χρήστη ή κωδικός.');
+            else if (s2 === 400 && isRegistering) setAuthError('Το όνομα χρήστη υπάρχει ήδη. Δοκίμασε διαφορετικό.');
+            else setAuthError('Σφάλμα σύνδεσης. Δοκίμασε ξανά σε λίγο.');
+          }
+        }, 8000);
       }
     }
   };
