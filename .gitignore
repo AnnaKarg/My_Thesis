@@ -1,7 +1,28 @@
+# Secrets
 .env
+frontend/.env
+
+# Database (local only)
+*.db
+*.db-shm
+*.db-wal
+
+# Python
 .venv/
 __pycache__/
 *.pyc
-.ipynb_checkpoints/
+*.pyo
+.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE / OS
+.idea/
+.vscode/
+*.DS_Store
+Thumbs.db
+
+# Claude
 .claude/
-tutor_database.db
