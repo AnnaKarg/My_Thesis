@@ -1,9 +1,10 @@
 import os
+import re
+import ssl as _ssl_module
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Υποστηρίζει SQLite (local dev) και PostgreSQL (production via Render/Neon)
 _raw_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./tutor_database.db")
 
 # Render/Neon δίνουν "postgres://" — SQLAlchemy θέλει "postgresql+asyncpg://"
@@ -12,11 +13,23 @@ if _raw_url.startswith("postgres://"):
 elif _raw_url.startswith("postgresql://") and "+asyncpg" not in _raw_url:
     _raw_url = _raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+# asyncpg δεν δέχεται sslmode= στο URL — το αφαιρούμε και το περνάμε ως connect_arg
+if "sslmode" in _raw_url:
+    _raw_url = re.sub(r'[?&]sslmode=\w+', '', _raw_url).rstrip('?&')
+
 DATABASE_URL = _raw_url
 _is_sqlite = DATABASE_URL.startswith("sqlite")
 
+# SSL context για PostgreSQL (Neon απαιτεί SSL)
+_connect_args = {}
+if not _is_sqlite:
+    _ssl_ctx = _ssl_module.create_default_context()
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = _ssl_module.CERT_NONE
+    _connect_args = {"ssl": _ssl_ctx}
+
 _db_echo = os.getenv("DB_ECHO", "false").lower() == "true"
-engine = create_async_engine(DATABASE_URL, echo=_db_echo)
+engine = create_async_engine(DATABASE_URL, echo=_db_echo, connect_args=_connect_args)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 Base = declarative_base()
@@ -26,7 +39,6 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
 
         if _is_sqlite:
-            # SQLite: ελέγχουμε/προσθέτουμε columns που προστέθηκαν incrementally
             result = await conn.execute(text("PRAGMA table_info(users)"))
             columns = [row[1] for row in result.fetchall()]
             extra_columns = [
@@ -50,4 +62,3 @@ async def init_db():
             await conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_chat_histories_user_id ON chat_histories (user_id)"
             ))
-        # PostgreSQL: create_all δημιουργεί τα πάντα από το model — δεν χρειάζεται ALTER TABLE
