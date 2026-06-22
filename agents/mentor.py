@@ -46,6 +46,10 @@ _ERROR_CATEGORY_LABELS = {
     "general_logic": "λογικά λάθη στη ροή του κώδικα",
     "method_error": "λάθος κλήση μεθόδου (π.χ. λίστα.len() αντί len(λίστα))",
     "missing_call": "συνάρτηση ορίστηκε αλλά δεν καλείται",
+    "missing_accumulator": "λείπει ο αθροιστής (π.χ. total += num σε κάθε επανάληψη)",
+    "literal_param_error": "literal τιμή ως παράμετρος (π.χ. def func(1, 2): αντί def func(a, b):)",
+    "print_func_ref": "print() δέχεται αναφορά συνάρτησης αντί για κλήση (print(func) αντί print(func(...)))",
+    "wrong_arg_count": "λάθος αριθμός ορισμάτων στην κλήση συνάρτησης",
 }
 
 def pick_lesson(state): # Επιλέγει το τρέχον μάθημα βάσει του state ή επιστρέφει το πρώτο μάθημα ως προεπιλογή
@@ -187,12 +191,15 @@ def _wants_to_start_task(text: str) -> bool:
         "άλλη άσκηση", "αλλη ασκηση", "άλλη μια άσκηση", "αλλη μια ασκηση",
         "επιπλέον άσκηση", "επιπλεον ασκηση", "ακόμα μια άσκηση", "ακομα μια ασκηση",
         "δώσε άσκηση", "δωσε ασκηση", "θέλω άσκηση", "θελω ασκηση",
+        "δώσε μου άσκηση", "δωσε μου ασκηση", "δώσε μου μια άσκηση", "δωσε μου μια ασκηση",
+        "θέλω μια άσκηση", "θελω μια ασκηση",
         "ας επαναλάβουμε", "ας επαναλαβουμε", "επαναλάβουμε", "επαναλαβουμε",
         "ξανά την άσκηση", "ξανα την ασκηση", "πάλι", "παλι",
         "επανάληψη", "επαναληψη", "δοκιμάσω ξανά", "δοκιμασω ξανα",
         "proxvrame", "proxwrame", "prochvrame", "proksorame",
         "θελω ακομα μια ακσηση", "ακσηση", "ακομα μια ακσηση",  # typo για ασκηση
-        "θελω ακομα", "αλλη ακσηση"
+        "θελω ακομα", "αλλη ακσηση",
+        "αυτα τα καταλαβα", "αυτά τα κατάλαβα",  # "αυτά τα κατάλαβα" = ready to continue
     ]
     return any(phrase in normalized for phrase in phrases)
 
@@ -234,7 +241,7 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
         context_hint = "Ο χρήστης εργάζεται πάνω σε άσκηση Python."
         categories = (
             "wants_task      - ο χρήστης θέλει νέα άσκηση ή απαντά θετικά για συνέχεια\n"
-            "                  (ναι, yes, οκ, πάμε, προχωράμε, αλλη ασκηση, καταλαβα, δεν εχω κλπ)\n"
+            "                  (ναι, yes, οκ, πάμε, προχωράμε, αλλη ασκηση, δωσε μου ασκηση, καταλαβα, δεν εχω κλπ)\n"
             "                  ΟΧΙ wants_task αν το μήνυμα ρωτάει 'πώς' ή 'μπορώ να' για σύνταξη\n"
             "                  ΣΗΜΑΝΤΙΚΟ: 'καταλαβα, αλλα...' ή 'καταλαβα αλλά [ερώτηση]' = ΟΧΙ wants_task, είναι theory_question\n"
             "theory_question - ο χρήστης κάνει ερώτηση θεωρίας, ζητά εξήγηση ή παράδειγμα\n"
@@ -251,9 +258,10 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
         context_hint = "Ο χρήστης βρίσκεται στη φάση θεωρίας (δεν έχει ξεκινήσει άσκηση ακόμα)."
         categories = (
             "wants_task      - ο χρήστης δηλώνει ΘΕΤΙΚΑ ότι κατάλαβε και θέλει να προχωρήσει\n"
-            "                  (προχωράμε, πάμε, έτοιμος, ναι, οκ, καταλαβα, εντάξει, δεν έχω απορία, δεν εχω κλπ)\n"
+            "                  (προχωράμε, πάμε, έτοιμος, ναι, οκ, καταλαβα, εντάξει, δεν έχω απορία, δεν εχω, δωσε ασκηση, δωσε μου ασκηση κλπ)\n"
             "                  — ΣΗΜΑΝΤΙΚΟ: 'δεν εχω' μόνο = 'δεν έχω απορίες' = wants_task\n"
             "                  — ΣΗΜΑΝΤΙΚΟ: 'νομίζω τα κατάλαβα', 'νομιζω', 'νομίζω εντάξει' = wants_task\n"
+            "                  — ΣΗΜΑΝΤΙΚΟ: 'Οχι αυτα τα καταλαβα' = 'αυτά τα κατάλαβα ήδη, συνέχισε' = wants_task\n"
             "                  — ΔΕΝ είναι wants_task: 'δεν νιωθω ετοιμος/η', 'δεν θελω', 'οχι δεν θελω' → other\n"
             "                  — ακόμα και με greeklish/ορθογραφικά λάθη: nai, katalava, proksorame κλπ\n"
             "theory_question - ο χρήστης κάνει ερώτηση ή ζητά εξήγηση/παράδειγμα για κάτι συγκεκριμένο\n"
@@ -296,21 +304,45 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
         return "other"
 
 
-def _answer_theory_question(user_input: str, lesson_title: str, theory: str, tone: str) -> str:
-    """Απαντά σε θεωρητική απορία GROUNDED αποκλειστικά στη theory της ενότητας."""
+def _answer_theory_question(user_input: str, lesson_title: str, theory: str, tone: str, current_lesson_id: int = 1) -> str:
+    """Απαντά σε θεωρητική απορία βάσει ΟΛΗΣ της θεωρίας που έχει διδαχθεί μέχρι τώρα.
+    Αν η ερώτηση αφορά μελλοντική ενότητα, λέει 'θα το δούμε σύντομα'.
+    """
+    # Χτίζουμε γνωστική βάση από όλες τις ενότητες που έχουν διδαχθεί
+    all_lessons = lessons_content.get("lessons", [])
+    covered_parts = []
+    future_titles = []
+    for l in all_lessons:
+        t_raw = l.get("detailed_theory", "")
+        t = t_raw.get("easy", "") if isinstance(t_raw, dict) else (t_raw or "")
+        if l["id"] <= current_lesson_id:
+            if t:
+                covered_parts.append(f"Ενότητα {l['id']} - {l.get('title', '')}:\n{t}")
+        else:
+            future_titles.append(l.get("title", ""))
+
+    knowledge_base = "\n\n---\n\n".join(covered_parts) if covered_parts else theory
+    future_info = (
+        f"Ενότητες που ΔΕΝ έχουμε καλύψει ακόμα: {', '.join(future_titles[:5])}.\n"
+        if future_titles else ""
+    )
+
     prompt_text = (
-        f'Είσαι καθηγητής Python. Απάντησε στην ερώτηση ΑΠΟΚΛΕΙΣΤΙΚΑ βάσει '
-        f'της παρακάτω θεωρίας.\n\n'
-        f'Θεωρία ενότητας "{lesson_title}":\n{theory}\n\n'
+        f'Είσαι καθηγητής Python. Έχεις διδάξει στον μαθητή τα παρακάτω:\n\n'
+        f'{knowledge_base}\n\n'
+        f'{future_info}'
+        f'Τρέχουσα ενότητα: "{lesson_title}"\n\n'
         f'Οδηγίες:\n'
-        f'- Γράψε ΠΑΝΤΑ ΚΑΙ ΑΠΟΚΛΕΙΣΤΙΚΑ στα Ελληνικά — ΜΗΝ χρησιμοποιήσεις καμία άλλη γλώσσα ή αλφάβητο (όχι αγγλικά, γερμανικά, γαλλικά κλπ). Ύφος: {tone}.\n'
+        f'- Γράψε ΠΑΝΤΑ ΚΑΙ ΑΠΟΚΛΕΙΣΤΙΚΑ στα Ελληνικά — ΜΗΝ χρησιμοποιήσεις καμία άλλη γλώσσα ή αλφάβητο. Ύφος: {tone}.\n'
         f'- ΜΗΝ δώσεις άσκηση\n'
         f'- ΜΗΝ επαναλάβεις όλη τη θεωρία — μόνο ό,τι αφορά την ερώτηση\n'
-        f'- Αν ρωτά για παράδειγμα, δώσε ένα μικρό παράδειγμα από τη θεωρία\n'
-        f'- Κλείσε με μία σύντομη ερώτηση (π.χ. "Έγινε πιο ξεκάθαρο;")\n'
-        f'- ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: ΜΗΝ αναφερθείς σε έννοιες που ΔΕΝ υπάρχουν στο '
-        f'παραπάνω κείμενο θεωρίας (π.χ. αν η θεωρία δεν αναφέρει λίστες/sets/λεξικά, '
-        f'ΜΗΝ τα αναφέρεις).\n\n'
+        f'- Αν ρωτά για κάτι που έχει ΗΔΗ διδαχθεί (ακόμα και από ΠΡΟΗΓΟΥΜΕΝΗ ενότητα), απάντησε κανονικά\n'
+        f'- Αν ρωτά για κάτι που ΔΕΝ έχει διδαχθεί ακόμα, πες: '
+        f'"Πολύ καλή ερώτηση! Αυτό θα το δούμε σε επόμενη ενότητα — μείνε ψύχραιμος, θα γίνει ξεκάθαρο σύντομα."\n'
+        f'- ΕΣΟΧΗ: η Python απαιτεί ΣΥΝΕΠΗ εσοχή. Το PEP 8 προτείνει 4 κενά αλλά 2 ή 3 συνεπή κενά επίσης λειτουργούν — το κλειδί είναι η ΣΥΝΕΠΕΙΑ στο ίδιο block.\n'
+        f'- ΕΙΣΑΓΩΓΙΚΑ: μονά \' \' και διπλά " " είναι ΙΣΟΔΥΝΑΜΑ στην Python — και τα δύο ορίζουν string. Χρησιμοποιούμε ένα ή το άλλο ανάλογα με το αν το string περιέχει εισαγωγικά μέσα.\n'
+        f'- Αν ρωτά για παράδειγμα, δώσε ένα μικρό παράδειγμα\n'
+        f'- Κλείσε με μία σύντομη ερώτηση (π.χ. "Έγινε πιο ξεκάθαρο;")\n\n'
         f'Ερώτηση μαθητή: {user_input}\n\nΑπάντηση:'
     )
     try:
@@ -343,7 +375,9 @@ def _generate_hint_with_llm(
         "[DEBUG: ERROR]", "undefined_name", "type_mismatch",
         "missing_if", "missing_for", "missing_function",
         "missing_append", "missing_list", "missing_output",
-        "missing_index", "print_as_variable"
+        "missing_index", "print_as_variable",
+        "missing_call", "method_error", "missing_accumulator", "literal_param_error",
+        "print_func_ref", "wrong_arg_count",
     ])
     if has_structural_error:
         # Deterministic για syntax/δομικά λάθη — αποφεύγει hallucinations
@@ -486,8 +520,9 @@ async def classify_pending_advance_intent_async(user_message: str, lesson_title:
         f'Ο μαθητής μόλις έλυσε σωστά μια άσκηση στην ενότητα "{lesson_title}".\n'
         f'Ο Mentor ρώτησε αν θέλει να προχωρήσει στην επόμενη ενότητα.\n\n'
         f'Κατηγοριοποίησε τι λέει ο μαθητής. Απάντησε ΜΟΝΟ με μία λέξη-κλειδί:\n\n'
-        f'wants_advance       - ΜΟΝΟ αν επιβεβαιώνει ΡΗΤΑ ότι θέλει να προχωρήσει\n'
-        f'                      (ναι, yes, ok, πάμε, προχωράμε, συνεχίζουμε, εντάξει, τέλεια, next)\n'
+        f'wants_advance       - αν επιβεβαιώνει ΡΗΤΑ ή ΣΙΩΠΗΡΑ ότι θέλει να προχωρήσει\n'
+        f'                      (ναι, yes, ok, πάμε, προχωράμε, συνεχίζουμε, εντάξει, τέλεια, next,\n'
+        f'                       υποθετω, μαλλον, ισως, οκ τελεια, καλα, αρχισε, εντάξει υποθετω)\n'
         f'                      ΔΕΝ είναι wants_advance αν το μήνυμα έχει ερώτηση ή αναφέρει "αλλη ασκηση"\n\n'
         f'wants_more_practice - θέλει άλλη άσκηση ΣΤΗΝ ΙΔΙΑ ενότητα πριν προχωρήσει\n'
         f'                      (αλλη ασκηση, θα ηθελα αλλη, βεβαιωθώ, μείνω λίγο, δεν είμαι έτοιμος,\n'
@@ -501,9 +536,15 @@ async def classify_pending_advance_intent_async(user_message: str, lesson_title:
         f'"ναι παμε" → wants_advance\n'
         f'"Είμαι" → wants_advance\n'
         f'"Έτοιμος" → wants_advance\n'
+        f'"υποθετω" → wants_advance\n'
+        f'"μαλλον" → wants_advance\n'
+        f'"ισως" → wants_advance\n'
         f'"θα ήθελα άλλη μια άσκηση σε αυτή την ενότητα αμα είναι εύκολο" → wants_more_practice\n'
         f'"αλλη ασκηση" → wants_more_practice\n'
         f'"ακόμα μια" → wants_more_practice\n'
+        f'"Άλλη μια άσκηση πριν προχωρίσουμε παρακαλώ" → wants_more_practice\n'
+        f'"αλλη ασκηση πριν προχωρισουμε" → wants_more_practice\n'
+        f'"μια ακομα πριν συνεχισουμε" → wants_more_practice\n'
         f'"Δε νιώθω έτοιμος" → wants_more_practice\n'
         f'"δεν νιώθω έτοιμος ακόμα" → wants_more_practice\n'
         f'"πριν προχωρίσουμε, τι είναι το index;" → other\n'
@@ -520,14 +561,19 @@ async def classify_pending_advance_intent_async(user_message: str, lesson_title:
         # Ελέγχουμε πρώτα ερωτήσεις → other
         if any(q in normalized for q in ["τι ειναι", "τι είναι", "πως", "πώς", "γιατι", "γιατί", "?"]):
             return "other"
-        practice_words = ["αλλη", "άλλη", "βεβαιωθ", "εξάσκ", "εξασκ", "ακόμα",
-                          "ακομα", "ίδια ενότητα", "ιδια ενοτητα", "μεινω", "μείνω",
-                          "νιωθ", "νιώθ", "δε νιω", "δεν νιω"]
+        # "αλλη ασκηση πριν προχωρισουμε" / "μια ακομα πριν συνεχισουμε" = wants_more_practice
+        _has_exercise_word = any(w in normalized for w in ["ασκηση", "άσκηση", "ασκησ"])
+        _has_another_word = any(w in normalized for w in ["αλλη", "άλλη", "ακομα", "ακόμα", "επιπλεον"])
+        if _has_exercise_word and _has_another_word:
+            return "wants_more_practice"
+        practice_words = ["βεβαιωθ", "εξάσκ", "εξασκ", "ίδια ενότητα", "ιδια ενοτητα",
+                          "μεινω", "μείνω", "νιωθ", "νιώθ", "δε νιω", "δεν νιω"]
         if any(w in normalized for w in practice_words):
             return "wants_more_practice"
         affirmatives = ["ναι", "nai", "yes", "ok", "παμε", "πάμε", "προχωράμε",
                         "προχωραμε", "εντάξει", "εντάξει", "τέλεια", "τελεια", "next",
-                        "ειμαι", "είμαι", "ετοιμ", "έτοιμ"]
+                        "ειμαι", "είμαι", "ετοιμ", "έτοιμ",
+                        "υποθετω", "μαλλον", "ισως", "καλα"]
         if any(w in normalized for w in affirmatives):
             return "wants_advance"
         return "other"
@@ -604,6 +650,13 @@ def _generate_targeted_hint(debug_report: str, difficulty: str, assessment_feedb
                 "Υπάρχει πρόβλημα με την εσοχή (indentation) κάποιας γραμμής. "
                 "Η Python είναι πολύ ευαίσθητη στα κενά μπροστά από κάθε γραμμή — "
                 "σιγουρέψου ότι χρησιμοποιείς 4 κενά ή Tab με συνέπεια."
+            )
+        # Literal τιμές ως ονόματα παραμέτρων (π.χ. def process(1, 4):)
+        if "literal_param_error" in error_part:
+            return (
+                "Οι παράμετροι σε μια def πρέπει να είναι ονόματα (π.χ. a, b), "
+                "όχι τιμές (π.χ. 1, 4). "
+                "Γράψε: def process(a, b): — και μετά κάλεσέ τη με τιμές: process(1, 4)."
             )
         # Ανεξάρτητα invalid syntax
         if "invalid syntax" in error_part:
@@ -701,6 +754,27 @@ def _generate_targeted_hint(debug_report: str, difficulty: str, assessment_feedb
         return (
             "Η συνάρτηση ορίζεται σωστά, αλλά δεν καλείται ποτέ. "
             "Πρόσθεσε μια κλήση της συνάρτησης έξω από αυτήν και τύπωσε το αποτέλεσμα με print()."
+        )
+
+    if "missing_accumulator" in report:
+        return (
+            "Χρειάζεσαι έναν αθροιστή — μια μεταβλητή που ξεκινά από 0 "
+            "και αυξάνεται σε κάθε επανάληψη με `+=`. "
+            "Επίσης, κάνε loop πάνω στη λίστα, όχι σε range()."
+        )
+
+    if "print_func_ref" in report:
+        return (
+            "Το print() τυπώνει τη συνάρτηση ως αντικείμενο αντί να την εκτελεί. "
+            "Πρέπει να καλέσεις τη συνάρτηση μέσα στο print — "
+            "γράψε print(process(τιμή1, τιμή2)) αντί print(process)."
+        )
+
+    if "wrong_arg_count" in report:
+        return (
+            "Η συνάρτηση καλείται χωρίς τα απαραίτητα ορίσματα. "
+            "Θυμήσου: κάλεσέ τη περνώντας τις τιμές, π.χ. process(3, 5) — "
+            "και τύπωσε το αποτέλεσμα: print(process(3, 5))."
         )
 
     if "missing_output" in report:
@@ -841,6 +915,14 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
         task_payload = generate_random_task(lesson, difficulty)
         task = task_payload["task_text"]
         success_criteria = task_payload["rendered_criteria"]
+
+    # Αν η εκφώνηση απαιτεί hard concepts (return/παράμετρ), δείχνουμε hard θεωρία
+    # ακόμα κι αν ο difficulty υπολογίστηκε ως "easy" (π.χ. λόγω πολλών αποτυχιών)
+    if isinstance(theory_raw, dict) and any(
+        kw in (task or "").lower()
+        for kw in ["return", "παράμετρ", "επιστρέφ", "ορίσματ"]
+    ):
+        theory = theory_raw.get("hard", theory)
 
     if isinstance(success_criteria, list):
         success_criteria_text = "\n".join([f"- {c}" for c in success_criteria]) if success_criteria else "- Σωστή λύση της άσκησης."
@@ -1206,7 +1288,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             ])
             if _has_inline_code or _has_inline_question:
                 # Απαντάμε βάσει του ορατού κώδικα/ερώτησης στο chat
-                theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone)
+                theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id)
                 deterministic_content = theory_answer
             else:
                 nudge = _generate_mentor_response(
@@ -1218,7 +1300,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 )
                 deterministic_content = nudge
         else:
-            theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone)
+            theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id)
             deterministic_content = theory_answer
     elif intent == "other":
         if not profile_checked:

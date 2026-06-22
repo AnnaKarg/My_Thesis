@@ -36,13 +36,17 @@ class _Analyzer(ast.NodeVisitor):
         self.has_len_method = False      # True αν χρησιμοποιεί λίστα.len() αντί len(λίστα)
         self.defined_functions = set()   # ονόματα συναρτήσεων που ορίζονται με def
         self.called_functions = set()    # ονόματα συναρτήσεων που καλούνται (εκτός builtins)
+        self.has_aug_assign = False      # True αν υπάρχει += (accumulator pattern)
+        self.function_params = {}        # fname → αριθμός παραμέτρων
+        self.wrong_call_args = []        # (fname, expected, actual) για λάθος αριθμό ορισμάτων
+        self.print_args = []             # Name args που περνάνε στο print (για print(func_ref))
+        self.func_aliases = set()        # μεταβλητές που ανατίθενται σε function ref (p = func)
 
     def visit_Assign(self, node):
         for target in node.targets:
             if isinstance(target, ast.Name):
                 self.assigned.add(target.id)
                 if target.id == "print":
-                    # Κοινό λάθος αρχαρίων: print = (x, y) αντί για print(x, y)
                     self.print_overwritten = True
         if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             candidate = node.value.value.strip()
@@ -50,11 +54,17 @@ class _Analyzer(ast.NodeVisitor):
                 for target in node.targets:
                     if isinstance(target, ast.Name):
                         self.quoted_number_vars.append(target.id)
+        # p = process — μεταβλητή που κρατά reference σε συνάρτηση (για print_func_ref)
+        if isinstance(node.value, ast.Name) and node.value.id in self.defined_functions:
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    self.func_aliases.add(t.id)
         self.generic_visit(node)
 
     def visit_AugAssign(self, node):
         if isinstance(node.target, ast.Name):
             self.assigned.add(node.target.id)
+            self.has_aug_assign = True
         self.generic_visit(node)
 
     def visit_Name(self, node):
@@ -76,6 +86,7 @@ class _Analyzer(ast.NodeVisitor):
         self.has_def = True
         self.assigned.add(node.name)
         self.defined_functions.add(node.name)
+        self.function_params[node.name] = len(node.args.args)
         for arg in node.args.args:
             self.assigned.add(arg.arg)
         self.generic_visit(node)
@@ -90,14 +101,23 @@ class _Analyzer(ast.NodeVisitor):
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and node.func.id == "print":
             self.has_print = True
+            # Εντοπίζει print(func) — Name arg αντί για κλήση
+            for arg in node.args:
+                if isinstance(arg, ast.Name):
+                    self.print_args.append(arg.id)
         if isinstance(node.func, ast.Attribute) and node.func.attr == "append":
             self.has_append = True
-        # Εντοπίζει λίστα.len() — κοινό λάθος αρχαρίων (σωστό: len(λίστα))
         if isinstance(node.func, ast.Attribute) and node.func.attr == "len":
             self.has_len_method = True
-        # Παρακολουθεί κλήσεις ορισμένων συναρτήσεων (για εντοπισμό "def χωρίς κλήση")
         if isinstance(node.func, ast.Name) and node.func.id not in self._BUILTIN_CALL_NAMES:
-            self.called_functions.add(node.func.id)
+            fname = node.func.id
+            self.called_functions.add(fname)
+            # Εντοπίζει κλήση με λάθος αριθμό ορισμάτων (π.χ. process() αντί process(a, b))
+            if fname in self.function_params:
+                expected = self.function_params[fname]
+                actual = len(node.args)
+                if expected > 0 and actual != expected:
+                    self.wrong_call_args.append((fname, expected, actual))
         self.generic_visit(node)
 
     def visit_List(self, node):
@@ -108,13 +128,14 @@ class _Analyzer(ast.NodeVisitor):
         self.has_index = True
         self.generic_visit(node)
 
-def _deterministic_findings(tree, success_criteria):
+def _deterministic_findings(tree, success_criteria, current_task=""):
     analyzer = _Analyzer()
     analyzer.visit(tree)
 
     findings = []
     categories = set()
-    criteria_text = _criteria_text(success_criteria).lower()
+    # Συνδυάζουμε criteria + task text ώστε λέξεις-κλειδιά από εκφώνηση να εντοπίζονται
+    criteria_text = (_criteria_text(success_criteria) + " " + (current_task or "")).lower()
 
     undefined = sorted(
         name for name in (analyzer.loaded - analyzer.assigned)
@@ -152,6 +173,31 @@ def _deterministic_findings(tree, success_criteria):
     if ("index" in criteria_text or "[0]" in criteria_text) and not analyzer.has_index:
         categories.add("missing_index")
         findings.append("Απουσία πρόσβασης με index ενώ ζητείται.")
+
+    # Bug 1: αθροιστής (+=) απαιτείται αλλά λείπει
+    if ("άθροισμ" in criteria_text or "αθροιστ" in criteria_text) and analyzer.has_for and not analyzer.has_aug_assign:
+        categories.add("missing_accumulator")
+        findings.append("Λείπει ο αθροιστής (total += ...). Χρησιμοποίησε μια μεταβλητή που ξεκινά από 0 και αυξάνεται σε κάθε επανάληψη.")
+
+    # print(func_ref) — συνάρτηση περνά ως αναφορά αντί να καλείται (print(process) αντί print(process(...)))
+    _bare_in_print = [
+        a for a in analyzer.print_args
+        if a in analyzer.defined_functions or a in analyzer.func_aliases
+    ]
+    if _bare_in_print and not (analyzer.called_functions & analyzer.defined_functions):
+        categories.add("print_func_ref")
+        findings.append(
+            "Το print() λαμβάνει τη συνάρτηση ως αναφορά αντί να την καλεί. "
+            "Χρησιμοποίησε print(process(τιμή1, τιμή2)) αντί print(process)."
+        )
+
+    # Λάθος αριθμός ορισμάτων στην κλήση συνάρτησης (π.χ. process() αντί process(a, b))
+    if analyzer.wrong_call_args and "print_func_ref" not in categories:
+        fname, expected, actual = analyzer.wrong_call_args[0]
+        categories.add("wrong_arg_count")
+        findings.append(
+            f"Η {fname}() καλείται με {actual} ορίσματα ενώ χρειάζεται {expected}."
+        )
 
     if ("τύπων" in criteria_text or "print" in criteria_text) and not analyzer.has_print:
         if analyzer.print_overwritten:
@@ -222,11 +268,16 @@ def debugging_node(state):
             return {
                 "debug_report": "[DEBUG: ERROR] else_if_error"
             }
+        # Συγκεκριμένη ανίχνευση: literal τιμές ως ονόματα παραμέτρων (π.χ. def func(1, 4):)
+        if re.search(r'\bdef\s+\w+\s*\([^)]*\d[^)]*\)', student_code):
+            return {
+                "debug_report": "[DEBUG: ERROR] literal_param_error"
+            }
         return {
             "debug_report": f"[DEBUG: ERROR] Συντακτικό λάθος: {e.msg} (γραμμή {e.lineno})."
         }
 
-    findings, categories = _deterministic_findings(tree, success_criteria)
+    findings, categories = _deterministic_findings(tree, success_criteria, current_task)
 
     if findings:
         technical = "\n".join(f"- {item}" for item in findings)

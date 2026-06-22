@@ -17,6 +17,7 @@ from agents.mentor import (
     classify_profile_async,
     generate_session_recap_async,
     classify_pending_advance_intent_async,
+    _wants_to_start_task,
 )
 
 router = APIRouter() # Δημιουργεί ένα router για να ορίσει τα API endpoints που σχετίζονται με το chat και την αυθεντικοποίηση
@@ -367,6 +368,15 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             user.active_success_criteria = "[]"
             task_started = False
             # Ξεχωριστό event_type για να μην μπει ο mentor στο just_advanced path
+            effective_event_type = "same_chapter_practice"
+        elif _wants_to_start_task(request.message):
+            # Safety net: classify_pending_advance επέστρεψε "other" αλλά το μήνυμα
+            # είναι σαφές αίτημα για άσκηση ("αλλη ασκηση", "δωσε μου ασκηση" κλπ).
+            user.pending_advance = False
+            user.active_task_lesson_id = 0
+            user.active_task_text = ""
+            user.active_success_criteria = "[]"
+            task_started = False
             effective_event_type = "same_chapter_practice"
         # else (other): ερώτηση/σχόλιο → το pending_advance παραμένει, ο mentor απαντά κανονικά
     # ─────────────────────────────────────────────────────────────────────────
