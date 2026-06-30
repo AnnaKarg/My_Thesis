@@ -118,19 +118,7 @@ export default function App() {
       } else if (status === 400 && isRegistering) {
         setAuthError('Το όνομα χρήστη υπάρχει ήδη. Δοκίμασε διαφορετικό.');
       } else {
-        // Network error (π.χ. Render cold start) — auto-retry μία φορά μετά από 8s
-        setAuthError('Ο server εκκινεί... επαναλαμβάνεται αυτόματα σε λίγο.');
-        setTimeout(async () => {
-          try {
-            await attemptAuth();
-            setAuthError('');
-          } catch (err2) {
-            const s2 = err2.response?.status;
-            if (s2 === 401) setAuthError('Λάθος όνομα χρήστη ή κωδικός.');
-            else if (s2 === 400 && isRegistering) setAuthError('Το όνομα χρήστη υπάρχει ήδη. Δοκίμασε διαφορετικό.');
-            else setAuthError('Σφάλμα σύνδεσης. Δοκίμασε ξανά σε λίγο.');
-          }
-        }, 8000);
+        setAuthError(`Σφάλμα: ${err.message || '?'} | HTTP: ${err.response?.status || 'none'}`);
       }
     }
   };
