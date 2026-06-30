@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/backend/:path*",
+      "destination": "https://my-thesis-backend.onrender.com/:path*"
+    }
+  ]
+}

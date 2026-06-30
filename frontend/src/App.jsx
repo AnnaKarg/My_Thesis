@@ -5,7 +5,9 @@ import ReactMarkdown from 'react-markdown';
 import { Send, Code2, Play, LogOut, Eye, EyeOff } from 'lucide-react';
 import './App.css';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+// Τοπικά: direct στο backend. Production (Vercel): μέσω proxy (/backend) — χωρίς CORS
+const _isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const API_BASE = _isLocal ? (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000') : '/backend';
 
 export default function App() {
   const [user, setUser] = useState(JSON.parse(localStorage.getItem('python_user_data')) || null);
@@ -118,7 +120,7 @@ export default function App() {
       } else if (status === 400 && isRegistering) {
         setAuthError('Το όνομα χρήστη υπάρχει ήδη. Δοκίμασε διαφορετικό.');
       } else {
-        setAuthError(`Σφάλμα: ${err.message || '?'} | HTTP: ${err.response?.status || 'none'}`);
+        setAuthError('Σφάλμα σύνδεσης με τον server. Δοκίμασε ξανά.');
       }
     }
   };
