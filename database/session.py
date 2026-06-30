@@ -59,6 +59,30 @@ async def init_db():
                 if col_name not in columns:
                     await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"))
 
+            # Migration: new columns on chat_histories
+            result_ch = await conn.execute(text("PRAGMA table_info(chat_histories)"))
+            ch_columns = [row[1] for row in result_ch.fetchall()]
+            for col_name, col_def in [
+                ("session_id", "INTEGER NOT NULL DEFAULT 0"),
+                ("created_at", "TEXT NOT NULL DEFAULT ''"),
+            ]:
+                if col_name not in ch_columns:
+                    await conn.execute(text(f"ALTER TABLE chat_histories ADD COLUMN {col_name} {col_def}"))
+
             await conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_chat_histories_user_id ON chat_histories (user_id)"
             ))
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_chat_histories_session_id ON chat_histories (session_id)"
+            ))
+        else:
+            # PostgreSQL: ADD COLUMN IF NOT EXISTS (idempotent)
+            for stmt in [
+                "ALTER TABLE chat_histories ADD COLUMN IF NOT EXISTS session_id INTEGER DEFAULT 0",
+                "ALTER TABLE chat_histories ADD COLUMN IF NOT EXISTS created_at TEXT DEFAULT ''",
+                "CREATE INDEX IF NOT EXISTS ix_chat_histories_session_id ON chat_histories (session_id)",
+            ]:
+                try:
+                    await conn.execute(text(stmt))
+                except Exception:
+                    pass

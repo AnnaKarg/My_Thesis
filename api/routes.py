@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException # Εισάγει τα απ
 import asyncio # Για ασύγχρονες λειτουργίες
 import json # Για φόρτωση των μαθημάτων από το αρχείο JSON
 import re
+import time
+from datetime import datetime, timezone
 from collections import Counter
 from pathlib import Path # Για να βρει το μονοπάτι του αρχείου JSON με τα μαθήματα
 from sqlalchemy.ext.asyncio import AsyncSession # Για ασύγχρονη διαχείριση της βάσης δεδομένων
@@ -51,8 +53,20 @@ class ChatRequest(BaseModel): # Σχήμα για τα δεδομένα που �
     is_task_attempt: bool = False
     task_started: bool = False
     event_type: str = ""
+    session_id: int = 0
 
-def _is_code_submission_message(content: str) -> bool: # Ελέγχει αν το μήνυμα υποδηλώνει υποβολή κώδικα 
+_HISTORY_TOKENS_RE = re.compile(
+    r'\n?\[(?:HINT|AWAITING_QUESTIONS|BUTTON:START_TASK|BUTTON:CONTINUE_TASK|'
+    r'ASSESSMENT:ADVANCE|ASSESSMENT:REPEAT|ASSESSMENT:SUPPORT|DEBUG:[^\]]*)\]'
+)
+
+def _sanitize_history(text: str) -> str:
+    return _HISTORY_TOKENS_RE.sub('', text or '').strip()
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def _is_code_submission_message(content: str) -> bool: # Ελέγχει αν το μήνυμα υποδηλώνει υποβολή κώδικα
     normalized = (content or "").strip().upper()
     return normalized == "CODE_SUBMISSION" or "```" in (content or "")
 
@@ -314,10 +328,56 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     else:
         welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
 
+    new_session_id = int(time.time())
+    db.add(ChatHistory(
+        user_id=user.id,
+        role="ai",
+        content=welcome_message,
+        session_id=new_session_id,
+        created_at=_now_iso(),
+    ))
+    await db.commit()
+
     return {
         "message": welcome_message,
         "current_lesson_id": user.current_lesson_id,
-        "profile_checked": user.profile_checked
+        "profile_checked": user.profile_checked,
+        "session_id": new_session_id,
+    }
+
+@router.get("/history/{user_id}/sessions")
+async def get_history_sessions(user_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ChatHistory)
+        .filter(ChatHistory.user_id == user_id, ChatHistory.session_id > 0)
+        .order_by(ChatHistory.session_id.asc())
+    )
+    messages = result.scalars().all()
+
+    sessions: dict = {}
+    for msg in messages:
+        sid = msg.session_id
+        if sid not in sessions:
+            sessions[sid] = {"session_id": sid, "created_at": msg.created_at, "preview": ""}
+        if msg.role == "ai" and not sessions[sid]["preview"]:
+            clean = _sanitize_history(msg.content)
+            sessions[sid]["preview"] = (clean[:80] + "…") if len(clean) > 80 else clean
+
+    return sorted(sessions.values(), key=lambda s: s["session_id"], reverse=True)
+
+@router.get("/history/{user_id}/sessions/{session_id}")
+async def get_session_messages(user_id: int, session_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ChatHistory)
+        .filter(ChatHistory.user_id == user_id, ChatHistory.session_id == session_id)
+        .order_by(ChatHistory.id.asc())
+    )
+    messages = result.scalars().all()
+    return {
+        "messages": [
+            {"role": m.role, "content": _sanitize_history(m.content)}
+            for m in messages
+        ]
     }
 
 @router.post("/chat/{user_id}") # Endpoint για την αλληλεπίδραση με τον χρήστη στην συνεδρία
@@ -336,8 +396,9 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     # Αν έχει ολοκληρωθεί το πρόγραμμα μαθημάτων, δεν συνεχίζουμε κανονική ροή agents.
     if TOTAL_LESSONS and user.current_lesson_id > TOTAL_LESSONS:
         ai_response = _build_course_stats_message(user, TOTAL_LESSONS)
-        db.add(ChatHistory(user_id=user.id, role="human", content=submission_message, time_spent=0.0, attempts_count=0))
-        db.add(ChatHistory(user_id=user.id, role="ai", content=ai_response))
+        _ts = _now_iso()
+        db.add(ChatHistory(user_id=user.id, role="human", content=submission_message, time_spent=0.0, attempts_count=0, session_id=request.session_id, created_at=_ts))
+        db.add(ChatHistory(user_id=user.id, role="ai", content=ai_response, session_id=request.session_id, created_at=_ts))
         await db.commit()
         return {
             "mentor_response": ai_response,
@@ -539,12 +600,15 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
 
     course_completed = False
 
+    _msg_ts = _now_iso()
     new_human = ChatHistory(
-        user_id=user.id, 
-        role="human", 
+        user_id=user.id,
+        role="human",
         content=submission_message,
         time_spent=request.time_spent if is_task_attempt_effective else 0.0,
-        attempts_count=1 if is_task_attempt_effective else 0
+        attempts_count=1 if is_task_attempt_effective else 0,
+        session_id=request.session_id,
+        created_at=_msg_ts,
     )
     db.add(new_human)
 
@@ -626,7 +690,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
 
     # Αποθηκεύουμε raw_response (με εσωτερικά tokens) ώστε οι helper functions να μπορούν
     # να εντοπίζουν [AWAITING_QUESTIONS], [HINT], [ASSESSMENT:*] κλπ. στο ιστορικό.
-    db.add(ChatHistory(user_id=user.id, role="ai", content=raw_response))
+    db.add(ChatHistory(user_id=user.id, role="ai", content=raw_response, session_id=request.session_id, created_at=_now_iso()))
 
     # code_was_correct: True όταν ο κώδικας ήταν σωστός (ακόμα κι αν decision="repeat").
     # Χρησιμοποιείται από το frontend για να κλειδώσει τον editor μόλις η άσκηση λυθεί.

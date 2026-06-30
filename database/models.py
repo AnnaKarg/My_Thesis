@@ -31,5 +31,7 @@ class ChatHistory(Base): # Ορίζουμε το μοντέλο ChatHistory πο
     user_id = Column(Integer, ForeignKey("users.id"), index=True)
     role = Column(String)
     content = Column(Text)
-    time_spent = Column(Float, default=0.0) 
+    time_spent = Column(Float, default=0.0)
     attempts_count = Column(Integer, default=0)
+    session_id = Column(Integer, default=0, index=True)  # groups messages per login session
+    created_at = Column(String, default="")               # ISO datetime string

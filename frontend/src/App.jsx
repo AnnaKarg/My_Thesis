@@ -15,6 +15,10 @@ export default function App() {
     localStorage.getItem('python_user_data') ? 'landing' : null
   );
   const [courseCompleted, setCourseCompleted] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState(0);
+  const [showHistorySidebar, setShowHistorySidebar] = useState(false);
+  const [historySessions, setHistorySessions] = useState([]);
+  const [historyModal, setHistoryModal] = useState(null); // {title, messages}
   const [isRegistering, setIsRegistering] = useState(false);
   const [authForm, setAuthForm] = useState({ username: '', password: '' });
   const [authError, setAuthError] = useState('');
@@ -64,14 +68,42 @@ export default function App() {
     return normalized ? `${normalized}.py` : 'main.py';
   };
 
+  const formatSessionDate = (isoString) => {
+    if (!isoString) return 'Παλιά συνομιλία';
+    const d = new Date(isoString);
+    const today = new Date();
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+    if (d.toDateString() === today.toDateString())
+      return `Σήμερα ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+    if (d.toDateString() === yesterday.toDateString()) return 'Χθες';
+    const months = ['Ιαν','Φεβ','Μαρ','Απρ','Μάι','Ιουν','Ιουλ','Αυγ','Σεπ','Οκτ','Νοε','Δεκ'];
+    return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+  };
+
   const bootstrapSession = async (targetUser) => {
     if (!targetUser?.id) return;
     try {
       const res = await axios.get(`${API_BASE}/session/${targetUser.id}/welcome`);
       setMessages([{ role: 'ai', content: res.data.message }]);
+      if (res.data.session_id) setCurrentSessionId(res.data.session_id);
     } catch (err) {
       setMessages([{ role: 'ai', content: `Γεια σου ${targetUser.username}! Πριν συνεχίσουμε, έχεις κάποια απορία;` }]);
     }
+  };
+
+  const fetchHistorySessions = async () => {
+    if (!user?.id) return;
+    try {
+      const res = await axios.get(`${API_BASE}/history/${user.id}/sessions`);
+      setHistorySessions(res.data.filter(s => s.session_id !== currentSessionId));
+    } catch { /* ignore */ }
+  };
+
+  const openSessionModal = async (session) => {
+    try {
+      const res = await axios.get(`${API_BASE}/history/${user.id}/sessions/${session.session_id}`);
+      setHistoryModal({ title: formatSessionDate(session.created_at), messages: res.data.messages });
+    } catch { /* ignore */ }
   };
 
   useEffect(() => {
@@ -188,7 +220,8 @@ export default function App() {
         time_spent: elapsedSeconds,
         is_task_attempt: false,
         task_started: true,
-        event_type: 'no_submission_timeout'
+        event_type: 'no_submission_timeout',
+        session_id: currentSessionId,
       });
 
       setMessages(prev => [...prev, { role: 'ai', content: res.data.mentor_response }]);
@@ -235,7 +268,8 @@ export default function App() {
         message: textToSend,
         code: "",
         time_spent: 0,
-        task_started: taskActive
+        task_started: taskActive,
+        session_id: currentSessionId,
       });
       setMessages(prev => [...prev, { role: 'ai', content: res.data.mentor_response }]);
     } catch (err) {
@@ -263,7 +297,8 @@ export default function App() {
         time_spent: timeSpent,
         is_task_attempt: true,
         task_started: true,
-        event_type: 'code_submission'
+        event_type: 'code_submission',
+        session_id: currentSessionId,
       });
 
       const mentorResponse = res.data?.mentor_response || "Δεν έλαβα απάντηση από τον Mentor.";
@@ -445,6 +480,58 @@ export default function App() {
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'flex', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'sans-serif', overflow: 'hidden' }}>
 
+      {/* ── History Modal ────────────────────────────────────────────────── */}
+      {historyModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+          onClick={() => setHistoryModal(null)}>
+          <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '680px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ padding: '16px 20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+              <strong style={{ color: '#aaa', fontSize: '0.95rem' }}>📚 Συνομιλία — {historyModal.title}</strong>
+              <button onClick={() => setHistoryModal(null)} style={{ background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: '1.3rem', lineHeight: 1 }}>✕</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {historyModal.messages.map((m, i) => (
+                <div key={i} style={{ alignSelf: m.role === 'human' ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
+                  <div style={{ background: m.role === 'human' ? '#007acc' : '#3e3e42', padding: '12px 16px', borderRadius: '12px', fontSize: '0.97rem', lineHeight: '1.55', wordBreak: 'break-word' }}>
+                    <ReactMarkdown>{m.content}</ReactMarkdown>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── History Sidebar ──────────────────────────────────────────────── */}
+      {showHistorySidebar && !isMobile && (
+        <div style={{ width: '210px', flexShrink: 0, background: '#1a1a1a', borderRight: '1px solid #2a2a2a', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 16px', borderBottom: '1px solid #2a2a2a', fontSize: '0.85rem', color: '#888', fontWeight: 'bold', flexShrink: 0 }}>
+            Παλιές συνομιλίες
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {historySessions.length === 0 ? (
+              <p style={{ color: '#555', fontSize: '0.82rem', padding: '16px', margin: 0 }}>Δεν υπάρχουν αποθηκευμένες συνομιλίες ακόμα.</p>
+            ) : (
+              historySessions.map(s => (
+                <div key={s.session_id}
+                  onClick={() => openSessionModal(s)}
+                  style={{ padding: '12px 14px', borderBottom: '1px solid #222', cursor: 'pointer', transition: 'background 0.15s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <div style={{ fontSize: '0.78rem', color: '#4caf50', marginBottom: '4px', fontWeight: 600 }}>
+                    {formatSessionDate(s.created_at)}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: '#888', lineHeight: '1.4', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                    {s.preview || '—'}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       <div style={{ width: isMobile ? '100%' : (showEditor ? '40%' : '60%'), minWidth: isMobile ? '0' : (showEditor ? '280px' : 'auto'), margin: (isMobile || showEditor) ? '0' : '0 auto', transition: 'width 0.5s ease', display: 'flex', flexDirection: 'column', background: '#252526', borderRight: showEditor ? '2px solid #333' : 'none', flexShrink: 0 }}>
         <div style={{ padding: '16px 20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
@@ -460,12 +547,24 @@ export default function App() {
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             {!courseCompleted && (
-              <button
-                onClick={() => setCurrentView('landing')}
-                style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#888', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
-              >
-                Αρχική
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    const next = !showHistorySidebar;
+                    setShowHistorySidebar(next);
+                    if (next) fetchHistorySessions();
+                  }}
+                  style={{ background: showHistorySidebar ? '#3a3a3a' : 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#aaa', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
+                >
+                  📚 Ιστορικό
+                </button>
+                <button
+                  onClick={() => setCurrentView('landing')}
+                  style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#888', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
+                >
+                  Αρχική
+                </button>
+              </>
             )}
             <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#ff5f56', cursor: 'pointer' }}><LogOut size={20} /></button>
           </div>
