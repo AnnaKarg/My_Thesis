@@ -19,6 +19,9 @@ llm_classify = ChatGroq( # LLM για deterministic ταξινόμηση προ�
     temperature=0
 )
 
+def _strip_thinking(text: str) -> str:
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
 LESSONS_PATH = Path(__file__).resolve().parents[1] / "content" / "lessons.json"
 
 with open(LESSONS_PATH, "r", encoding="utf-8") as f: # Φορτώνει το περιεχόμενο των μαθημάτων από το JSON αρχείο
@@ -350,7 +353,7 @@ def _answer_theory_question(user_input: str, lesson_title: str, theory: str, ton
     )
     try:
         result = llm.invoke(prompt_text)
-        return result.content.strip()
+        return _strip_thinking(result.content)
     except Exception:
         return (
             f"Καλή ερώτηση! Ας ξαναδούμε τη θεωρία:\n\n{theory}\n\n"
@@ -434,7 +437,7 @@ def _generate_hint_with_llm(
     )
     try:
         result = llm.invoke(prompt_text)
-        hint = result.content.strip()
+        hint = _strip_thinking(result.content)
         return hint if hint else _generate_targeted_hint(debug_report, difficulty, assessment_feedback)
     except Exception:
         return _generate_targeted_hint(debug_report, difficulty, assessment_feedback)
@@ -473,7 +476,7 @@ def _generate_mentor_response(
     )
     try:
         result = llm.invoke(prompt_text)
-        return result.content.strip()
+        return _strip_thinking(result.content)
     except Exception:
         return ""
 
@@ -504,7 +507,7 @@ async def generate_session_recap_async(history_pairs: list, lesson_name: str, us
     )
     try:
         result = await llm.ainvoke(prompt)
-        recap = result.content.strip()
+        recap = _strip_thinking(result.content)
         return recap if recap else ""
     except Exception:
         return ""
