@@ -11,8 +11,7 @@ load_dotenv() # Φορτώνει τις περιβαλλοντικές μετα�
 
 llm = ChatGroq( # Αρχικοποιεί το LLM για παραγωγή απαντήσεων
     model_name="qwen/qwen3.6-27b",
-    temperature=0.1, # Χαμηλή θερμοκρασία για πιο συνεπείς απαντήσεις
-    model_kwargs={"reasoning_effort": "none"}  # Απενεργοποιεί το thinking mode
+    temperature=0.1 # Χαμηλή θερμοκρασία για πιο συνεπείς απαντήσεις
 )
 
 llm_classify = ChatGroq( # LLM για deterministic ταξινόμηση προθέσεων (temperature=0, χωρίς τυχαιότητα)
