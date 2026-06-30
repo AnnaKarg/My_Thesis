@@ -275,7 +275,7 @@ export default function App() {
 
   if (!user) {
     return (
-      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#121212', color: 'white' }}>
+      <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#121212', color: 'white', padding: '16px', boxSizing: 'border-box' }}>
 
         {/* ── Modal επιτυχούς εγγραφής ── */}
         {registerSuccessModal && (
@@ -294,7 +294,7 @@ export default function App() {
           </div>
         )}
 
-        <div style={{ background: '#1e1e1e', padding: '52px 56px', borderRadius: '24px', width: '460px', textAlign: 'center', boxShadow: '0 10px 48px rgba(0,0,0,0.7)' }}>
+        <div style={{ background: '#1e1e1e', padding: 'clamp(24px, 5vw, 52px) clamp(20px, 5vw, 56px)', borderRadius: '24px', width: '100%', maxWidth: '460px', textAlign: 'center', boxShadow: '0 10px 48px rgba(0,0,0,0.7)', boxSizing: 'border-box' }}>
           <Code2 size={60} color="#4caf50" style={{ marginBottom: '18px' }} />
           <h2 style={{ marginBottom: '8px', fontSize: '1.8rem' }}>AI Python Tutor</h2>
           <p style={{ color: '#888', fontSize: '1rem', marginBottom: '28px' }}>
@@ -350,9 +350,9 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'sans-serif' }}>
+    <div style={{ display: 'flex', height: '100dvh', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'sans-serif' }}>
       
-      <div style={{ width: showEditor ? '40%' : '60%', margin: showEditor ? '0' : '0 auto', transition: 'width 0.5s ease', display: 'flex', flexDirection: 'column', background: '#252526', borderRight: '2px solid #333' }}>
+      <div style={{ width: showEditor ? '40%' : '60%', minWidth: showEditor ? '280px' : 'auto', margin: showEditor ? '0' : '0 auto', transition: 'width 0.5s ease', display: 'flex', flexDirection: 'column', background: '#252526', borderRight: '2px solid #333', minHeight: 0, overflow: 'hidden' }}>
         <div style={{ padding: '20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <strong>Μέντορας Python</strong>
           <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#ff5f56', cursor: 'pointer' }}><LogOut size={20} /></button>
@@ -365,7 +365,7 @@ export default function App() {
             );
             return messages.map((m, i) => (
               <div key={i} style={{ alignSelf: m.role === 'human' ? 'flex-end' : 'flex-start', maxWidth: '90%' }}>
-                <div style={{ background: m.role === 'human' ? '#007acc' : '#3e3e42', padding: '16px 18px', borderRadius: '15px', fontSize: '1.05rem', lineHeight: '1.6' }}>
+                <div style={{ background: m.role === 'human' ? '#007acc' : '#3e3e42', padding: '16px 18px', borderRadius: '15px', fontSize: '1.05rem', lineHeight: '1.6', wordBreak: 'break-word', overflowWrap: 'break-word', minWidth: 0 }}>
                   <ReactMarkdown>
                     {sanitizeMentorText(m.content)}
                   </ReactMarkdown>
@@ -406,7 +406,7 @@ export default function App() {
       </div>
 
       {showEditor && (
-        <div style={{ width: '60%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, minWidth: '300px', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
           <div style={{ padding: '15px', background: '#1e1e1e', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Code2 size={18} color={editorEnabled ? '#007acc' : '#555'} />
