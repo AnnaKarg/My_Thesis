@@ -1326,14 +1326,22 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             )
             deterministic_content = f"{not_ready_response}\n[AWAITING_QUESTIONS]"
         else:
-            clarification = _generate_mentor_response(
-                context="Ο μαθητής έστειλε μήνυμα που δεν κατανοώ. Ξεκίνα με 'Δεν κατάλαβα!' και ζήτα διευκρίνιση σε 1 πρόταση.",
-                indicative="π.χ. 'Δεν κατάλαβα! Τι εννοείς;'",
-                tone="φιλικά",
-                brief=True,
-                must_not="δώσεις θεωρία, άσκηση, hint ή γράψεις πάνω από 1 πρόταση"
+            phase_ctx = (
+                f"εργάζεται πάνω στην άσκηση της ενότητας '{lesson_title}'" if task_started
+                else f"βρίσκεται στη φάση θεωρίας της ενότητας '{lesson_title}'"
             )
-            deterministic_content = clarification
+            freeform = _generate_mentor_response(
+                context=(
+                    f"Ο μαθητής {phase_ctx} και έστειλε: «{user_input}». "
+                    f"Απάντα φυσικά και με ενσυναίσθηση σε αυτό που είπε, "
+                    f"και μετά επανάφερε ήπια τη συζήτηση στο μάθημα."
+                ),
+                indicative="π.χ. 'Καταλαβαίνω! Ας επιστρέψουμε στο...' ή 'Χαχα, αλλά ας συνεχίσουμε!'",
+                tone="φιλικά, φυσικά",
+                brief=True,
+                must_not="δώσεις θεωρία, άσκηση ή hint — απλά απάντα και επανάφερε τη ροή"
+            )
+            deterministic_content = freeform
     elif awaiting_questions or (profile_checked and not task_started and not wants_task):
         outro = _generate_mentor_response(
             context=f"Ο μαθητής διάβασε τη θεωρία '{lesson_title}'. Ρώτα αν έχει απορίες.",
