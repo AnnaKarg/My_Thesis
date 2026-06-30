@@ -11,7 +11,8 @@ load_dotenv() # Φορτώνει τις περιβαλλοντικές μετα�
 
 llm = ChatGroq( # Αρχικοποιεί το LLM για παραγωγή απαντήσεων
     model_name="qwen/qwen3.6-27b",
-    temperature=0.1 # Χαμηλή θερμοκρασία για πιο συνεπείς απαντήσεις
+    temperature=0.1, # Χαμηλή θερμοκρασία για πιο συνεπείς απαντήσεις
+    model_kwargs={"reasoning_effort": "none"}  # Απενεργοποιεί το thinking mode
 )
 
 llm_classify = ChatGroq( # LLM για deterministic ταξινόμηση προθέσεων (temperature=0, χωρίς τυχαιότητα)
@@ -20,7 +21,11 @@ llm_classify = ChatGroq( # LLM για deterministic ταξινόμηση προ�
 )
 
 def _strip_thinking(text: str) -> str:
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    if "</think>" in text:
+        return text.split("</think>", 1)[1].strip()
+    if "<think>" in text:
+        return text.split("<think>", 1)[0].strip()
+    return text.strip()
 
 LESSONS_PATH = Path(__file__).resolve().parents[1] / "content" / "lessons.json"
 
