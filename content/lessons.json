@@ -66,7 +66,7 @@
       },
       "possible_values": {
         "var_name": ["speed", "temp", "score", "level"],
-        "value": [45, 80, 15, 60],
+        "value": [45, 110, 15, 60],
         "limit": [50, 100, 70]
       },
       "success_criteria": {

@@ -1065,6 +1065,11 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
         intent = "other"
     else:
         intent = _classify_intent(user_input, profile_checked, task_started)
+        # Αρνητική απάντηση σε awaiting_questions context: ο LLM ερμηνεύει "οχι" ως wants_task
+        # (= "δεν θέλω άλλη εξήγηση, δώσε άσκηση"), αλλά πρέπει να πάει σε "other" →
+        # _is_negative_after_theory handler που ρωτά τι ακριβώς δεν έγινε ξεκάθαρο.
+        if awaiting_questions and intent == "wants_task" and _is_negative_after_theory(user_input):
+            intent = "other"
 
     wants_task = intent == "wants_task"
     # Αν υπάρχει κώδικας και ο μαθητής δεν πέρασε, ΔΕΝ ξαναπαρουσιάζουμε την άσκηση
