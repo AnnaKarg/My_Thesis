@@ -283,7 +283,7 @@ export default function App() {
 
   if (!user) {
     return (
-      <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#121212', color: 'white', padding: '16px', boxSizing: 'border-box' }}>
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#121212', color: 'white', padding: '16px', overflowY: 'auto' }}>
 
         {/* ── Modal επιτυχούς εγγραφής ── */}
         {registerSuccessModal && (
@@ -361,7 +361,7 @@ export default function App() {
   const isMobile = windowWidth < 640;
 
   return (
-    <div style={{ display: 'flex', height: '100dvh', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'sans-serif', overflow: 'hidden' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'sans-serif', overflow: 'hidden' }}>
 
       <div style={{ width: isMobile ? '100%' : (showEditor ? '40%' : '60%'), minWidth: isMobile ? '0' : (showEditor ? '280px' : 'auto'), margin: (isMobile || showEditor) ? '0' : '0 auto', transition: 'width 0.5s ease', display: 'flex', flexDirection: 'column', background: '#252526', borderRight: showEditor ? '2px solid #333' : 'none', flexShrink: 0 }}>
         <div style={{ padding: '20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
