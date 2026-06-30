@@ -10,7 +10,7 @@ from dotenv import load_dotenv # Για φόρτωση περιβαλλοντι�
 load_dotenv() # Φορτώνει τις περιβαλλοντικές μεταβλητές από το .env αρχείο (π.χ. API keys)
 
 llm = ChatGroq( # Αρχικοποιεί το LLM για παραγωγή απαντήσεων
-    model_name="llama-3.3-70b-versatile",
+    model_name="qwen/qwen3.6-27b",
     temperature=0.1 # Χαμηλή θερμοκρασία για πιο συνεπείς απαντήσεις
 )
 
