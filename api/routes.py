@@ -408,9 +408,16 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
 
     # 1. Profile Check Logic (Beginner vs Expert) — LLM-based classification
     is_first_login = len(db_history) == 0
+    profile_soft_defaulted = False
     if not user.profile_checked:
         profile_result = await classify_profile_async(request.message)
-        if profile_result != "unclear":
+        if profile_result == "ambiguous":
+            # Απάντησε αλλά χωρίς να διευκρινίσει ποιο από τα δύο (π.χ. γυμνό "ναι") —
+            # soft-default σε beginner αντί να ξαναρωτήσουμε, ο mentor το εξηγεί αυτόνομα.
+            user.experience_level = "beginner"
+            user.profile_checked = True
+            profile_soft_defaulted = True
+        elif profile_result != "unclear":
             # Ξεκάθαρη απάντηση → κλειδώνουμε το profile
             user.experience_level = profile_result
             user.profile_checked = True
@@ -564,6 +571,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         "awaiting_questions": awaiting_questions,
         "is_first_login": is_first_login,
         "profile_checked": user.profile_checked,
+        "profile_soft_defaulted": profile_soft_defaulted,
         "difficulty_probe_direction": difficulty_probe_direction,
         "avg_hints_per_task": float(user.avg_hints_per_task or 0.0),
     }

@@ -19,12 +19,33 @@ llm_classify = ChatGroq( # LLM για deterministic ταξινόμηση προ�
     temperature=0
 )
 
+_FOREIGN_SCRIPT_RE = re.compile(
+    "["
+    "一-鿿㐀-䶿"   # CJK Unified + Extension A
+    "぀-ヿ"                  # Hiragana, Katakana
+    "가-힣"                  # Hangul
+    "Ѐ-ӿ"                  # Cyrillic
+    "؀-ۿ"                  # Arabic
+    "֐-׿"                  # Hebrew
+    "฀-๿"                  # Thai
+    "ऀ-ॿ"                  # Devanagari
+    "]+"
+)
+
+def _strip_foreign_scripts(text: str) -> str:
+    """Αφαιρεί tokens σε αλφάβητα εκτός ελληνικών/λατινικών — μερικές φορές το LLM διαρρέει
+    CJK/κυριλλικά/άλλα scripts μέσα σε ελληνικό κείμενο παρά τη ρητή οδηγία να γράφει μόνο Ελληνικά."""
+    cleaned = _FOREIGN_SCRIPT_RE.sub("", text)
+    return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+
 def _strip_thinking(text: str) -> str:
     if "</think>" in text:
-        return text.split("</think>", 1)[1].strip()
-    if "<think>" in text:
-        return text.split("<think>", 1)[0].strip()
-    return text.strip()
+        text = text.split("</think>", 1)[1].strip()
+    elif "<think>" in text:
+        text = text.split("<think>", 1)[0].strip()
+    else:
+        text = text.strip()
+    return _strip_foreign_scripts(text)
 
 LESSONS_PATH = Path(__file__).resolve().parents[1] / "content" / "lessons.json"
 
@@ -452,6 +473,15 @@ def _generate_hint_with_llm(
         return _generate_targeted_hint(debug_report, difficulty, assessment_feedback)
 
 
+def _enforce_brief(text: str, max_sentences: int = 2) -> str:
+    """Περιορίζει σε max_sentences προτάσεις. Ασφαλιστική δικλείδα για brief=True: αν το LLM
+    αγνοήσει την οδηγία 1-2 προτάσεων (π.χ. γράψει ολόκληρη εφευρημένη εκφώνηση άσκησης αντί
+    για σύντομη εναρκτήρια φράση), κόβουμε στην έξοδο αντί να εμπιστευόμαστε μόνο το prompt."""
+    parts = [p for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p]
+    if len(parts) <= max_sentences:
+        return text.strip()
+    return " ".join(parts[:max_sentences]).strip()
+
 def _generate_mentor_response(
     context: str,
     indicative: str = "",
@@ -486,7 +516,8 @@ def _generate_mentor_response(
     )
     try:
         result = llm.invoke(prompt_text)
-        return _strip_thinking(result.content)
+        cleaned = _strip_thinking(result.content)
+        return _enforce_brief(cleaned) if brief else cleaned
     except Exception:
         return ""
 
@@ -608,16 +639,20 @@ async def classify_pending_advance_intent_async(user_message: str, lesson_title:
 async def classify_profile_async(user_input: str) -> str:
     """Ταξινομεί αν ο χρήστης είναι expert ή beginner βάσει LLM.
     Επιστρέφει 'unclear' αν το input είναι gibberish — ο mentor θα ξαναρωτήσει.
+    Επιστρέφει 'ambiguous' αν ο χρήστης απάντησε αλλά χωρίς να διευκρινίσει ποιο από τα δύο
+    (π.χ. ένα γυμνό 'ναι' σε ερώτηση τύπου 'Α ή Β;') — ο mentor θα κάνει soft-default σε beginner.
     Fallback σε keyword matching αν το LLM αποτύχει."""
     if _is_gibberish(user_input):
         return "unclear"
     prompt_text = (
         'Ο χρήστης αποκρίνεται στην ερώτηση '
-        '"Έχεις ξαναγράψει κώδικα ή είναι η πρώτη σου επαφή;".\n'
-        'Απάντησε ΜΟΝΟ με: expert, beginner, ή unclear\n\n'
+        '"Έχεις ξαναγράψει κώδικα ή είναι η πρώτη σου επαφή;" (ερώτηση τύπου "Α ή Β;", ΟΧΙ ναι/όχι).\n'
+        'Απάντησε ΜΟΝΟ με: expert, beginner, ambiguous, ή unclear\n\n'
         'ΚΑΝΟΝΑΣ: Οποιοσδήποτε βαθμός εμπειρίας — ακόμα και ελάχιστη επαφή με κώδικα — = expert.\n'
         'Μόνο η ΑΠΟΛΥΤΗ απειρία (πρώτη φορά, ποτέ, δεν ξέρω τίποτα) = beginner.\n'
-        'Αν το μήνυμα δεν απαντά στην ερώτηση ή είναι ακατανόητο → unclear\n\n'
+        'ΣΗΜΑΝΤΙΚΟ: Ένα γυμνό "ναι"/"yes"/"ok"/"εντάξει" ΧΩΡΙΣ καμία άλλη λεπτομέρεια ΔΕΝ διευκρινίζει '
+        'ποιο από τα δύο (έμπειρος ή αρχάριος) εννοεί ο χρήστης — αυτό είναι ambiguous, ΟΧΙ expert.\n'
+        'Αν το μήνυμα δεν απαντά καθόλου στην ερώτηση ή είναι ακατανόητο → unclear\n\n'
         'Παραδείγματα:\n'
         '"θελω να μαθω python" → beginner\n'
         '"θελω να ξεκινησω" → beginner\n'
@@ -628,10 +663,12 @@ async def classify_profile_async(user_input: str) -> str:
         '"ξερω λιγο" → expert\n'
         '"λίγο, αλλά ξέρω βασικά" → expert\n'
         '"έχω γράψει κάποια πράγματα" → expert\n'
-        '"yes" / "ναι" → expert\n'
         '"όχι, πρώτη φορά" → beginner\n'
         '"δεν ξέρω τίποτα" → beginner\n'
         '"ποτέ μου" → beginner\n'
+        '"ναι" (μόνο, χωρίς τίποτα άλλο) → ambiguous\n'
+        '"yes" (μόνο) → ambiguous\n'
+        '"ok" / "οκ" / "εντάξει" (μόνο) → ambiguous\n'
         '"esghh" / "qwerty" / τυχαία γράμματα → unclear\n'
         '"τι;" / "δεν καταλαβαίνω" / ερώτηση αντί απάντησης → unclear\n\n'
         f'Μήνυμα: "{user_input}"\n\nΑπάντηση:'
@@ -641,10 +678,14 @@ async def classify_profile_async(user_input: str) -> str:
         answer = result.content.strip().lower().split()[0]
         if "unclear" in answer:
             return "unclear"
+        if "ambiguous" in answer:
+            return "ambiguous"
         return "expert" if "expert" in answer else "beginner"
     except Exception:
-        msg = (user_input or "").lower()
-        if any(w in msg for w in [
+        normalized = (user_input or "").strip().lower()
+        if normalized in {"ναι", "nai", "yes", "ok", "οκ", "εντάξει", "ενταξει"}:
+            return "ambiguous"
+        if any(w in normalized for w in [
             "ναι", "έχω", "εχω", "γνωρίζω", "γνωριζω", "προχωρημένος",
             "ξέρω", "ξερω", "yes", "λίγο", "λιγο", "ασχολ", "δουλεψ", "γραψ"
         ]):
@@ -927,6 +968,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
 
     is_first_login = state.get("is_first_login", False)
     profile_checked = state.get("profile_checked", False)
+    profile_soft_defaulted = state.get("profile_soft_defaulted", False)
     awaiting_questions = state.get("awaiting_questions", False)
     event_type = state.get("event_type", "")
     task_started = state.get("task_started", False)
@@ -1093,9 +1135,26 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
         )
     elif is_first_login and profile_checked:
         # intro: πριν τη θεωρία — brief=True + must_not για να μην την εξηγήσει ο LLM μόνος του
+        if profile_soft_defaulted:
+            # Η απάντηση στο profile-check ήταν ασαφής (π.χ. γυμνό "ναι" σε ερώτηση "Α ή Β;").
+            # Soft-default σε beginner — το LLM εξηγεί αυτόνομα γιατί, χωρίς δεύτερο γύρισμα ερώτησης.
+            intro_context = (
+                f"Η απάντηση του μαθητή στην ερώτηση εμπειρίας δεν ήταν ξεκάθαρη (είπε μόνο '{user_input}', "
+                f"που δεν διευκρινίζει αν έχει ξαναγράψει κώδικα ή όχι). Πες του φιλικά ότι, μιας και δεν ήταν "
+                f"απόλυτα ξεκάθαρο, θα ξεκινήσετε από τα βασικά για σιγουριά, και ότι αν δείξει πως τα έχει ήδη "
+                f"κατακτήσει θα ανέβει σύντομα το επίπεδο δυσκολίας. Ξεκινάς να παρουσιάσεις τη θεωρία "
+                f"'{lesson_title}' που ακολουθεί αμέσως."
+            )
+            intro_indicative = (
+                "π.χ. 'Δεν έγινε απόλυτα ξεκάθαρο, οπότε ας ξεκινήσουμε από τα βασικά για σιγουριά — "
+                "αν δω ότι τα έχεις ήδη, σε προχωράω γρήγορα!'"
+            )
+        else:
+            intro_context = f"Μόλις έμαθες ότι ο μαθητής είναι {'αρχάριος' if experience == 'beginner' else 'έχει εμπειρία'}. Ξεκινάς να παρουσιάσεις τη θεωρία '{lesson_title}' που ακολουθεί αμέσως."
+            intro_indicative = "π.χ. 'Τέλεια! Ξεκινάμε:' ή 'Καλώς! Ας δούμε:'"
         intro = _generate_mentor_response(
-            context=f"Μόλις έμαθες ότι ο μαθητής είναι {'αρχάριος' if experience == 'beginner' else 'έχει εμπειρία'}. Ξεκινάς να παρουσιάσεις τη θεωρία '{lesson_title}' που ακολουθεί αμέσως.",
-            indicative="π.χ. 'Τέλεια! Ξεκινάμε:' ή 'Καλώς! Ας δούμε:'",
+            context=intro_context,
+            indicative=intro_indicative,
             tone="φιλικά, ζεστά",
             brief=True,
             must_not="εξηγήσεις ή περιγράψεις τη θεωρία — αυτή εμφανίζεται αμέσως μετά"
