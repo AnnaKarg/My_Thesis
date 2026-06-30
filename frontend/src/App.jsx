@@ -17,6 +17,9 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [registerSuccessModal, setRegisterSuccessModal] = useState(false);
 
+  const [authLoading, setAuthLoading] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+
   const [showEditor, setShowEditor] = useState(false);
   const [editorEnabled, setEditorEnabled] = useState(false);
   const [startTime, setStartTime] = useState(null);
@@ -68,6 +71,12 @@ export default function App() {
   };
 
   useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
@@ -98,7 +107,8 @@ export default function App() {
       return;
     }
 
-    const attemptAuth = async () => {
+    setAuthLoading(true);
+    try {
       const res = await axios.post(`${API_BASE}/${endpoint}`, payload);
       if (isRegistering) {
         setRegisterSuccessModal(true);
@@ -109,10 +119,6 @@ export default function App() {
         setUser(res.data);
         localStorage.setItem('python_user_data', JSON.stringify(res.data));
       }
-    };
-
-    try {
-      await attemptAuth();
     } catch (err) {
       const status = err.response?.status;
       if (status === 401) {
@@ -120,8 +126,10 @@ export default function App() {
       } else if (status === 400 && isRegistering) {
         setAuthError('Το όνομα χρήστη υπάρχει ήδη. Δοκίμασε διαφορετικό.');
       } else {
-        setAuthError('Σφάλμα σύνδεσης με τον server. Δοκίμασε ξανά.');
+        setAuthError('Δεν απαντά ο server. Δοκίμασε ξανά σε λίγο.');
       }
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -334,9 +342,10 @@ export default function App() {
 
           <button
             onClick={handleAuth}
-            style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: '#4caf50', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem' }}
+            disabled={authLoading}
+            style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: authLoading ? '#388e3c' : '#4caf50', color: 'white', fontWeight: 'bold', cursor: authLoading ? 'wait' : 'pointer', fontSize: '1.1rem', transition: 'background 0.2s' }}
           >
-            {isRegistering ? 'Εγγραφή' : 'Είσοδος'}
+            {authLoading ? '⏳ Σύνδεση...' : (isRegistering ? 'Εγγραφή' : 'Είσοδος')}
           </button>
           <p
             onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); setShowPassword(false); }}
@@ -349,10 +358,12 @@ export default function App() {
     );
   }
 
+  const isMobile = windowWidth < 640;
+
   return (
-    <div style={{ display: 'flex', height: '100dvh', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'sans-serif' }}>
-      
-      <div style={{ width: showEditor ? '40%' : '60%', minWidth: showEditor ? '280px' : 'auto', margin: showEditor ? '0' : '0 auto', transition: 'width 0.5s ease', display: 'flex', flexDirection: 'column', background: '#252526', borderRight: '2px solid #333', minHeight: 0, overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: '100dvh', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'sans-serif', overflow: 'hidden' }}>
+
+      <div style={{ width: isMobile ? '100%' : (showEditor ? '40%' : '60%'), minWidth: isMobile ? '0' : (showEditor ? '280px' : 'auto'), margin: (isMobile || showEditor) ? '0' : '0 auto', transition: 'width 0.5s ease', display: 'flex', flexDirection: 'column', background: '#252526', borderRight: showEditor ? '2px solid #333' : 'none', flexShrink: 0 }}>
         <div style={{ padding: '20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <strong>Μέντορας Python</strong>
           <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#ff5f56', cursor: 'pointer' }}><LogOut size={20} /></button>
