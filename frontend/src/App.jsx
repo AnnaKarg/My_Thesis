@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
-import { Send, Code2, Play, LogOut, Eye, EyeOff } from 'lucide-react';
+import { Send, Code2, Play, LogOut, Eye, EyeOff, BookOpen, Zap, FileCode } from 'lucide-react';
 import './App.css';
 
 // Τοπικά: direct στο backend. Production (Vercel): μέσω proxy (/backend) — χωρίς CORS
@@ -11,6 +11,10 @@ const API_BASE = _isLocal ? (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8
 
 export default function App() {
   const [user, setUser] = useState(JSON.parse(localStorage.getItem('python_user_data')) || null);
+  const [currentView, setCurrentView] = useState(
+    localStorage.getItem('python_user_data') ? 'landing' : null
+  );
+  const [courseCompleted, setCourseCompleted] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [authForm, setAuthForm] = useState({ username: '', password: '' });
   const [authError, setAuthError] = useState('');
@@ -81,10 +85,10 @@ export default function App() {
   }, [messages, loading]);
 
   useEffect(() => {
-    if (user && messages.length === 0) {
+    if (user && currentView === 'mentor' && messages.length === 0) {
       bootstrapSession(user);
     }
-  }, [user]);
+  }, [user, currentView]);
 
   // Wake-up ping: μόλις εμφανιστεί το login, στέλνουμε ένα GET στο backend
   // ώστε το Render να ξυπνήσει πριν ο χρήστης πατήσει Εγγραφή/Σύνδεση
@@ -118,6 +122,7 @@ export default function App() {
       } else {
         setUser(res.data);
         localStorage.setItem('python_user_data', JSON.stringify(res.data));
+        setCurrentView('landing');
       }
     } catch (err) {
       const status = err.response?.status;
@@ -135,6 +140,8 @@ export default function App() {
 
   const handleLogout = () => {
     setUser(null);
+    setCurrentView(null);
+    setCourseCompleted(false);
     setShowEditor(false);
     setEditorEnabled(false);
     setStartTime(null);
@@ -143,6 +150,10 @@ export default function App() {
     setLastActivityTime(null);
     localStorage.removeItem('python_user_data');
     setMessages([]);
+  };
+
+  const handleEnterMentor = () => {
+    setCurrentView('mentor');
   };
 
   const handleStartTask = () => {
@@ -257,11 +268,15 @@ export default function App() {
 
       const mentorResponse = res.data?.mentor_response || "Δεν έλαβα απάντηση από τον Mentor.";
       const isCorrect = Boolean(res.data?.is_correct);
-      const courseCompleted = Boolean(res.data?.course_completed);
+      const responseComplete = Boolean(res.data?.course_completed);
 
       setMessages(prev => [...prev, { role: 'ai', content: mentorResponse }]);
 
-      if (isCorrect || courseCompleted) {
+      if (responseComplete) {
+        setCourseCompleted(true);
+      }
+
+      if (isCorrect || responseComplete) {
         // Σωστή λύση → κλείδωμα editor μέχρι το κουμπί της επόμενης άσκησης
         setStartTime(null);
         setTaskActive(false);
@@ -358,15 +373,102 @@ export default function App() {
     );
   }
 
+  if (currentView === 'landing') {
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? 'Καλημέρα' : 'Καλησπέρα';
+
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'sans-serif', overflowY: 'auto' }}>
+        {/* Header */}
+        <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2a2a2a', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Code2 size={22} color="#4caf50" />
+            <strong style={{ fontSize: '1.05rem' }}>AI Python Tutor</strong>
+          </div>
+          <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem' }}>
+            <LogOut size={17} /> Αποσύνδεση
+          </button>
+        </div>
+
+        {/* Main */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
+          <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 2.2rem)', marginBottom: '8px', textAlign: 'center', fontWeight: 700 }}>
+            {greeting}, {user.username}!
+          </h1>
+          <p style={{ color: '#888', fontSize: '1.05rem', marginBottom: '52px', textAlign: 'center' }}>
+            Τι θα ήθελες να κάνεις σήμερα;
+          </p>
+
+          <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '860px', width: '100%' }}>
+
+            {/* Κάρτα 1: Μαθήματα — ενεργή */}
+            <div
+              onClick={handleEnterMentor}
+              style={{ background: '#1e1e1e', border: '2px solid #4caf50', borderRadius: '20px', padding: '36px 24px', width: '240px', cursor: 'pointer', textAlign: 'center', boxShadow: '0 4px 20px rgba(76,175,80,0.12)', transition: 'transform 0.15s, box-shadow 0.15s', boxSizing: 'border-box' }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-5px)'; e.currentTarget.style.boxShadow = '0 10px 32px rgba(76,175,80,0.28)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(76,175,80,0.12)'; }}
+            >
+              <BookOpen size={52} color="#4caf50" style={{ marginBottom: '18px' }} />
+              <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem' }}>Μαθήματα Python</h3>
+              <p style={{ color: '#888', fontSize: '0.88rem', margin: 0, lineHeight: '1.55' }}>
+                Δομημένα μαθήματα με τον προσωπικό σου μέντορα
+              </p>
+            </div>
+
+            {/* Κάρτα 2: Εξάσκηση — σύντομα */}
+            <div style={{ background: '#161616', border: '2px solid #2a2a2a', borderRadius: '20px', padding: '36px 24px', width: '240px', textAlign: 'center', opacity: 0.55, boxSizing: 'border-box', cursor: 'not-allowed' }}>
+              <Zap size={52} color="#444" style={{ marginBottom: '18px' }} />
+              <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem', color: '#555' }}>Εξάσκηση</h3>
+              <p style={{ color: '#444', fontSize: '0.88rem', margin: '0 0 16px', lineHeight: '1.55' }}>
+                Προσαρμοστικές ασκήσεις βάσει των αναγκών σου
+              </p>
+              <span style={{ fontSize: '0.78rem', background: '#222', color: '#555', padding: '4px 12px', borderRadius: '20px' }}>Σύντομα...</span>
+            </div>
+
+            {/* Κάρτα 3: Αξιολόγηση κώδικα — σύντομα */}
+            <div style={{ background: '#161616', border: '2px solid #2a2a2a', borderRadius: '20px', padding: '36px 24px', width: '240px', textAlign: 'center', opacity: 0.55, boxSizing: 'border-box', cursor: 'not-allowed' }}>
+              <FileCode size={52} color="#444" style={{ marginBottom: '18px' }} />
+              <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem', color: '#555' }}>Αξιολόγηση Κώδικα</h3>
+              <p style={{ color: '#444', fontSize: '0.88rem', margin: '0 0 16px', lineHeight: '1.55' }}>
+                Ανέβασε δικό σου κώδικα για ανάλυση
+              </p>
+              <span style={{ fontSize: '0.78rem', background: '#222', color: '#555', padding: '4px 12px', borderRadius: '20px' }}>Σύντομα...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const isMobile = windowWidth < 640;
 
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'flex', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'sans-serif', overflow: 'hidden' }}>
 
       <div style={{ width: isMobile ? '100%' : (showEditor ? '40%' : '60%'), minWidth: isMobile ? '0' : (showEditor ? '280px' : 'auto'), margin: (isMobile || showEditor) ? '0' : '0 auto', transition: 'width 0.5s ease', display: 'flex', flexDirection: 'column', background: '#252526', borderRight: showEditor ? '2px solid #333' : 'none', flexShrink: 0 }}>
-        <div style={{ padding: '20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong>Μέντορας Python</strong>
-          <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#ff5f56', cursor: 'pointer' }}><LogOut size={20} /></button>
+        <div style={{ padding: '16px 20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+            <strong style={{ whiteSpace: 'nowrap' }}>Μέντορας Python</strong>
+            {courseCompleted && (
+              <button
+                onClick={() => { setCourseCompleted(false); setMessages([]); setCurrentView('landing'); }}
+                style={{ background: '#4caf50', border: 'none', borderRadius: '8px', color: 'white', padding: '6px 14px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}
+              >
+                🏠 Αρχική
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {!courseCompleted && (
+              <button
+                onClick={() => setCurrentView('landing')}
+                style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#888', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
+              >
+                Αρχική
+              </button>
+            )}
+            <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#ff5f56', cursor: 'pointer' }}><LogOut size={20} /></button>
+          </div>
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>

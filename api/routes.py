@@ -214,7 +214,52 @@ def _build_performance_summary(db_history, user: User):
         ensure_ascii=False,
     )
 
-async def get_db(): 
+_ERROR_LABEL_SIMPLE = {
+    "missing_output": "απουσία εκτύπωσης αποτελέσματος",
+    "wrong_operator": "λάθος τελεστής",
+    "type_error": "σφάλμα τύπου δεδομένων (π.χ. string αντί για αριθμό)",
+    "undefined_variable": "χρήση μεταβλητής που δεν έχει οριστεί",
+    "syntax_error": "συντακτικό σφάλμα",
+    "wrong_list_type": "λάθος τύπος στοιχείων λίστας",
+    "empty_print": "print() χωρίς ορίσματα",
+    "missing_return": "απουσία return σε συνάρτηση",
+    "wrong_function_name": "λάθος όνομα συνάρτησης",
+    "wrong_variable_name": "λάθος όνομα μεταβλητής",
+    "missing_loop": "απουσία επανάληψης",
+    "off_by_one": "σφάλμα εύρους (off-by-one)",
+}
+
+def _build_course_stats_message(user, total_lessons: int) -> str:
+    solved = int(user.solved_tasks or 0)
+    avg_time = round(float(user.avg_time_spent or 0.0), 1)
+    level_map = {"beginner": "Αρχάριο", "intermediate": "Ενδιάμεσο", "expert": "Προχωρημένο"}
+    level_display = level_map.get(user.experience_level or "beginner", "Αρχάριο")
+
+    try:
+        raw_errors = json.loads(user.frequent_error_categories or "[]")[:3]
+    except Exception:
+        raw_errors = []
+
+    if raw_errors:
+        error_lines = "\n".join(
+            f"  - {_ERROR_LABEL_SIMPLE.get(e, e)}" for e in raw_errors
+        )
+        error_section = f"- **Συχνότερα λάθη που συναντήθηκαν:**\n{error_lines}"
+    else:
+        error_section = "- **Λάθη:** Καμία επαναλαμβανόμενη δυσκολία εντοπίστηκε 🌟"
+
+    return (
+        f"🎉 **Συγχαρητήρια, {user.username}! Ολοκλήρωσες όλο το πρόγραμμα μαθημάτων Python!**\n\n"
+        f"**📊 Τα στατιστικά σου:**\n"
+        f"- **Μαθήματα:** {total_lessons}/{total_lessons} ολοκληρωμένα\n"
+        f"- **Ασκήσεις που λύθηκαν:** {solved}\n"
+        f"- **Μέσος χρόνος ανά άσκηση:** {avg_time:.0f} δευτερόλεπτα\n"
+        f"- **Τελικό επίπεδο:** {level_display}\n"
+        f"{error_section}\n\n"
+        f"Εξαιρετική δουλειά! Συνέχισε να εξασκείσαι — η Python σε περιμένει!"
+    )
+
+async def get_db():
     session = AsyncSessionLocal()
     try:
         yield session
@@ -290,10 +335,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
 
     # Αν έχει ολοκληρωθεί το πρόγραμμα μαθημάτων, δεν συνεχίζουμε κανονική ροή agents.
     if TOTAL_LESSONS and user.current_lesson_id > TOTAL_LESSONS:
-        ai_response = (
-            "Συγχαρητήρια! Έχεις ολοκληρώσει όλα τα διαθέσιμα μαθήματα. "
-            "Για την παρούσα έκδοση η διδασκαλία ολοκληρώνεται εδώ."
-        )
+        ai_response = _build_course_stats_message(user, TOTAL_LESSONS)
         db.add(ChatHistory(user_id=user.id, role="human", content=submission_message, time_spent=0.0, attempts_count=0))
         db.add(ChatHistory(user_id=user.id, role="ai", content=ai_response))
         await db.commit()
@@ -570,10 +612,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             user.current_lesson_id = TOTAL_LESSONS + 1
             user.pending_advance = False
             course_completed = True
-            ai_response = (
-                "Συγχαρητήρια! Ολοκλήρωσες επιτυχώς όλα τα διαθέσιμα μαθήματα. "
-                "Στην παρούσα φάση η διδασκαλία ολοκληρώνεται εδώ."
-            )
+            ai_response = _build_course_stats_message(user, TOTAL_LESSONS)
             user.active_task_lesson_id = 0
             user.active_task_text = ""
             user.active_success_criteria = "[]"
