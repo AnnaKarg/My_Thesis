@@ -334,6 +334,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     reset_for_next_lesson = _should_reset_for_next_lesson(db_history, request.message)
 
     effective_event_type = request.event_type
+    _previous_task_text = ""  # αποθηκεύεται πριν καθαριστεί, για αποφυγή επανάληψης same_chapter_practice
 
     # ── Pending advance handling (LLM-based, όχι keyword matching) ──────────
     # Το μάθημα ΔΕΝ ανεβαίνει αμέσως μετά από σωστή λύση — περιμένει επιβεβαίωση.
@@ -363,6 +364,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         elif pending_intent == "wants_more_practice":
             # Ο μαθητής θέλει άλλη άσκηση στο ΙΔΙΟ κεφάλαιο → νέα χωρίς advance
             user.pending_advance = False
+            _previous_task_text = user.active_task_text or ""  # αποθηκεύουμε πριν καθαρίσουμε
             user.active_task_lesson_id = 0  # force νέα παραλλαγή άσκησης
             user.active_task_text = ""
             user.active_success_criteria = "[]"
@@ -373,6 +375,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             # Safety net: classify_pending_advance επέστρεψε "other" αλλά το μήνυμα
             # είναι σαφές αίτημα για άσκηση ("αλλη ασκηση", "δωσε μου ασκηση" κλπ).
             user.pending_advance = False
+            _previous_task_text = user.active_task_text or ""  # αποθηκεύουμε πριν καθαρίσουμε
             user.active_task_lesson_id = 0
             user.active_task_text = ""
             user.active_success_criteria = "[]"
@@ -418,7 +421,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     )
 
     if current_lesson and not active_task_matches_lesson:
-        task_payload = generate_random_task(current_lesson, task_difficulty)
+        task_payload = generate_random_task(current_lesson, task_difficulty, current_task=_previous_task_text or None)
         user.active_task_lesson_id = user.current_lesson_id
         user.active_task_text = task_payload.get("task_text", "")
         rendered_criteria = task_payload.get("rendered_criteria", [])

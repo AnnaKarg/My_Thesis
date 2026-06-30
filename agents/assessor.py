@@ -296,11 +296,19 @@ def _strict_task_matching(student_code: str, current_task: str):
         return True, []
 
     assignments = _extract_assignments(student_code)
+    # Συμπεριλαμβάνουμε και ονόματα συναρτήσεων (FunctionDef) ώστε "συνάρτηση calculate" να αναγνωρίζεται
+    try:
+        _ftree = ast.parse(student_code)
+        _defined_funcs = {n.name for n in ast.walk(_ftree) if isinstance(n, ast.FunctionDef)}
+    except SyntaxError:
+        _defined_funcs = set()
+    all_defined_names = set(assignments.keys()) | _defined_funcs
+
     expectations = _extract_expected_from_task(current_task)
     failures = []
 
     for expected_name in expectations["names"]:
-        if expected_name not in assignments:
+        if expected_name not in all_defined_names:
             failures.append(f"Απουσία αναμενόμενου ονόματος μεταβλητής: {expected_name}")
 
     for expected_name in expectations["string_names"]:

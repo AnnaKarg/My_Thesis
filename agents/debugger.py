@@ -31,6 +31,8 @@ class _Analyzer(ast.NodeVisitor):
         self.has_index = False
         self.has_list = False
         self.has_print = False
+        self.has_empty_print = False     # True αν υπάρχει print() χωρίς ορίσματα
+        self.list_has_only_strings = False  # True αν λίστα περιέχει μόνο string literals
         self.print_overwritten = False  # True αν ο μαθητής έγραψε print = (...) αντί print(...)
         self.quoted_number_vars = []
         self.has_len_method = False      # True αν χρησιμοποιεί λίστα.len() αντί len(λίστα)
@@ -101,6 +103,8 @@ class _Analyzer(ast.NodeVisitor):
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and node.func.id == "print":
             self.has_print = True
+            if not node.args and not node.keywords:
+                self.has_empty_print = True
             # Εντοπίζει print(func) — Name arg αντί για κλήση
             for arg in node.args:
                 if isinstance(arg, ast.Name):
@@ -122,6 +126,8 @@ class _Analyzer(ast.NodeVisitor):
 
     def visit_List(self, node):
         self.has_list = True
+        if node.elts and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.elts):
+            self.list_has_only_strings = True
         self.generic_visit(node)
 
     def visit_Subscript(self, node):
@@ -221,6 +227,26 @@ def _deterministic_findings(tree, success_criteria, current_task=""):
         categories.add("type_mismatch")
         findings.append("Αριθμητική τιμή αποθηκεύτηκε ως string στις μεταβλητές: " + ", ".join(sorted(set(analyzer.quoted_number_vars))))
 
+    # Λίστα με string στοιχεία αντί αριθμητικά (π.χ. ["α","β","γ"] αντί [1,2,3])
+    if analyzer.list_has_only_strings and analyzer.has_for and any(
+        kw in criteria_text for kw in ["αριθμ", "τετράγων", "τετραγων", "number", "num"]
+    ):
+        categories.add("wrong_list_type")
+        findings.append(
+            "Η λίστα περιέχει strings (κείμενο σε εισαγωγικά) αντί για αριθμητικά στοιχεία. "
+            "Χρησιμοποίησε αριθμούς χωρίς εισαγωγικά, π.χ. [1, 2, 3]."
+        )
+
+    # print() χωρίς ορίσματα ενώ η εκφώνηση ζητά συγκεκριμένο output
+    if analyzer.has_empty_print and any(
+        kw in criteria_text for kw in ["τύπωσε", "τύπωνε", "εκτύπωσε", "print"]
+    ):
+        categories.add("empty_print")
+        findings.append(
+            "Χρησιμοποιείς print() χωρίς τίποτα μέσα — τυπώνεται κενή γραμμή. "
+            "Πρόσθεσε μέσα αυτό που θέλεις να εμφανιστεί: print('κείμενο') ή print(μεταβλητή)."
+        )
+
     return findings, sorted(categories)
 
 def _semantic_analysis(student_code: str, success_criteria, current_task: str) -> str:
@@ -235,10 +261,13 @@ def _semantic_analysis(student_code: str, success_criteria, current_task: str) -
         f"Κριτήρια: {criteria_text}\n"
         f"Κώδικας μαθητή:\n{student_code}\n\n"
         f"Ελέγξε αν ο κώδικας ικανοποιεί τα ζητούμενα της εκφώνησης σημασιολογικά.\n"
+        f"ΣΗΜΑΝΤΙΚΟ: Τα Ελληνικά ονόματα μεταβλητών/παραμέτρων (π.χ. α, β, γ, αποτέλεσμα) "
+        f"είναι ΠΛΗΡΩΣ ΕΓΚΥΡΑ στην Python 3 — ΜΗΝ τα σημαίνεις ποτέ ως λάθος.\n"
         f"Έλεγξε ΕΙΔΙΚΑ:\n"
         f"- Αν οι τιμές που τυπώνονται (print) ταιριάζουν ΑΚΡΙΒΩΣ με αυτές της εκφώνησης (κεφαλαία/μικρά, ορθογραφία)\n"
         f"- Αν η λογική των if/elif/else κλάδων είναι αντεστραμμένη (π.χ. τυπώνει 'High' αντί 'Low')\n"
         f"- Αν μια συνθήκη ελέγχει λάθος τιμή ή χρησιμοποιεί λάθος τελεστή (>, <, >=, <=)\n"
+        f"- Αν η συνάρτηση ορίζεται σωστά (σωστό όνομα, παράμετροι, return) και καλείται σωστά\n"
         f"Αν βρεις ΟΠΟΙΟΔΗΠΟΤΕ από αυτά τα προβλήματα, γράψε 1 σύντομη πρόταση που περιγράφει ΤΙ ακριβώς είναι λάθος.\n"
         f"Αν ο κώδικας είναι πλήρως σωστός, γράψε ΜΟΝΟ: OK\n\nΑνάλυση:"
     )

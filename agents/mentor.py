@@ -57,6 +57,8 @@ _ERROR_CATEGORY_LABELS = {
     "literal_param_error": "literal τιμή ως παράμετρος (π.χ. def func(1, 2): αντί def func(a, b):)",
     "print_func_ref": "print() δέχεται αναφορά συνάρτησης αντί για κλήση (print(func) αντί print(func(...)))",
     "wrong_arg_count": "λάθος αριθμός ορισμάτων στην κλήση συνάρτησης",
+    "wrong_list_type": "λάθος τύπος στοιχείων λίστας (strings αντί για αριθμούς)",
+    "empty_print": "print() χωρίς ορίσματα — τυπώνει κενή γραμμή",
 }
 
 def pick_lesson(state): # Επιλέγει το τρέχον μάθημα βάσει του state ή επιστρέφει το πρώτο μάθημα ως προεπιλογή
@@ -351,8 +353,8 @@ def _answer_theory_question(user_input: str, lesson_title: str, theory: str, ton
         f'"Πολύ καλή ερώτηση! Αυτό θα το δούμε σε επόμενη ενότητα — μείνε ψύχραιμος, θα γίνει ξεκάθαρο σύντομα."\n'
         f'- ΕΣΟΧΗ: η Python απαιτεί ΣΥΝΕΠΗ εσοχή. Το PEP 8 προτείνει 4 κενά αλλά 2 ή 3 συνεπή κενά επίσης λειτουργούν — το κλειδί είναι η ΣΥΝΕΠΕΙΑ στο ίδιο block.\n'
         f'- ΕΙΣΑΓΩΓΙΚΑ: μονά \' \' και διπλά " " είναι ΙΣΟΔΥΝΑΜΑ στην Python — και τα δύο ορίζουν string. Χρησιμοποιούμε ένα ή το άλλο ανάλογα με το αν το string περιέχει εισαγωγικά μέσα.\n'
-        f'- Αν ρωτά για παράδειγμα, δώσε ένα μικρό παράδειγμα\n'
-        f'- Κλείσε με μία σύντομη ερώτηση (π.χ. "Έγινε πιο ξεκάθαρο;")\n\n'
+        f'- Αν ρωτά για παράδειγμα, δώσε ΜΟΝΟ ένα σύντομο παράδειγμα (3-5 γραμμές κώδικα) — χωρίς πολλαπλές υπο-ενότητες, χωρίς full tutorial\n'
+        f'- Κλείσε με μία σύντομη ερώτηση — εναλλάσσοντας κάθε φορά ανάμεσα σε: "Έγινε πιο ξεκάθαρο;", "Έχεις κι άλλη απορία;", "Βγαίνει νόημα;", "Τι άλλο σε μπερδεύει;". ΜΗΝ χρησιμοποιείς πάντα την ίδια φράση.\n\n'
         f'Ερώτηση μαθητή: {user_input}\n\nΑπάντηση:'
     )
     try:
@@ -387,7 +389,7 @@ def _generate_hint_with_llm(
         "missing_append", "missing_list", "missing_output",
         "missing_index", "print_as_variable",
         "missing_call", "method_error", "missing_accumulator", "literal_param_error",
-        "print_func_ref", "wrong_arg_count",
+        "print_func_ref", "wrong_arg_count", "wrong_list_type", "empty_print",
     ])
     if has_structural_error:
         # Deterministic για syntax/δομικά λάθη — αποφεύγει hallucinations
@@ -537,7 +539,9 @@ async def classify_pending_advance_intent_async(user_message: str, lesson_title:
         f'wants_more_practice - θέλει άλλη άσκηση ΣΤΗΝ ΙΔΙΑ ενότητα πριν προχωρήσει\n'
         f'                      (αλλη ασκηση, θα ηθελα αλλη, βεβαιωθώ, μείνω λίγο, δεν είμαι έτοιμος,\n'
         f'                       μπορώ κι άλλη, θέλω να εξασκηθώ, ακόμα μια, στην ίδια ενότητα,\n'
-        f'                       "αμα ειναι ευκολο" ΜΕ "άσκηση", κλπ)\n\n'
+        f'                       "αμα ειναι ευκολο" ΜΕ "άσκηση", κλπ)\n'
+        f'                      ΣΗΜΑΝΤΙΚΟ: "οχι"/"όχι"/"no" ΜΟΝΟ (χωρίς άλλο κείμενο) = wants_more_practice\n'
+        f'                      (απόρριψη της πρότασης "θέλεις να προχωρήσεις;" σημαίνει ότι θέλει να μείνει)\n\n'
         f'other               - ερώτηση θεωρίας, σχόλιο, κάτι άλλο\n'
         f'                      (τι είναι, πώς, γιατί, εξήγησέ μου, κλπ)\n'
         f'                      ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: Αν το μήνυμα περιέχει ερώτηση (τι, πώς, γιατί, ποιος)\n'
@@ -567,10 +571,13 @@ async def classify_pending_advance_intent_async(user_message: str, lesson_title:
         return intent if intent in {"wants_advance", "wants_more_practice", "other"} else "other"
     except Exception:
         # Keyword fallback
-        normalized = (user_message or "").lower()
+        normalized = (user_message or "").lower().strip()
         # Ελέγχουμε πρώτα ερωτήσεις → other
         if any(q in normalized for q in ["τι ειναι", "τι είναι", "πως", "πώς", "γιατι", "γιατί", "?"]):
             return "other"
+        # Απλό "οχι"/"no" χωρίς ερωτήσεις = wants_more_practice (δεν θέλει να προχωρήσει)
+        if normalized in {"οχι", "όχι", "no", "οχι.", "όχι.", "no."}:
+            return "wants_more_practice"
         # "αλλη ασκηση πριν προχωρισουμε" / "μια ακομα πριν συνεχισουμε" = wants_more_practice
         _has_exercise_word = any(w in normalized for w in ["ασκηση", "άσκηση", "ασκησ"])
         _has_another_word = any(w in normalized for w in ["αλλη", "άλλη", "ακομα", "ακόμα", "επιπλεον"])
@@ -790,6 +797,18 @@ def _generate_targeted_hint(debug_report: str, difficulty: str, assessment_feedb
             "και τύπωσε το αποτέλεσμα: print(process(3, 5))."
         )
 
+    if "wrong_list_type" in report:
+        return (
+            "Η λίστα σου περιέχει κείμενο (strings σε εισαγωγικά) αντί για αριθμούς. "
+            "Ορίσε αριθμούς χωρίς εισαγωγικά, π.χ. numbers = [1, 2, 3]."
+        )
+
+    if "empty_print" in report:
+        return (
+            "Το print() σου δεν έχει τίποτα μέσα — τυπώνει κενή γραμμή. "
+            "Πρόσθεσε αυτό που θέλεις να εμφανιστεί: print('κείμενο') ή print(μεταβλητή)."
+        )
+
     if "missing_output" in report:
         return "Λείπει η εντολή print(). Πρόσθεσέ την για να εμφανίσεις το αποτέλεσμα."
 
@@ -834,7 +853,7 @@ def _resolve_placeholders(text: str, replacements: dict) -> str:
         resolved_text = resolved_text.replace("{" + key + "}", str(value))
     return resolved_text
 
-def generate_random_task(lesson, difficulty):
+def generate_random_task(lesson, difficulty, current_task=None):
     templates_dict = lesson.get("task_templates", {})
     templates = templates_dict.get(difficulty, templates_dict.get("easy", []))
 
@@ -844,7 +863,16 @@ def generate_random_task(lesson, difficulty):
             "rendered_criteria": lesson.get("success_criteria", []),
         }
 
-    template = random.choice(templates)
+    # Αν υπάρχουν πολλά templates, αποφεύγουμε το template που παράγει ίδια άσκηση
+    available = templates
+    if current_task and len(templates) > 1:
+        # Κρατάμε templates που δεν αρχίζουν με τα ίδια 30 πρώτα γράμματα με την τρέχουσα άσκηση
+        task_prefix = current_task[:30]
+        other = [t for t in templates if not t[:30] == task_prefix]
+        if other:
+            available = other
+
+    template = random.choice(available)
     possible_values = lesson.get("possible_values", {})
     replacements = {}
 
@@ -925,7 +953,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     success_criteria = state.get("success_criteria")
 
     if not task or success_criteria is None:
-        task_payload = generate_random_task(lesson, difficulty)
+        task_payload = generate_random_task(lesson, difficulty, current_task=state.get("previous_task"))
         task = task_payload["task_text"]
         success_criteria = task_payload["rendered_criteria"]
 
@@ -974,7 +1002,10 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     # Εξαίρεση: "δεν νιωθω ετοιμος/η" — ο μαθητής δεν είναι έτοιμος, δεν πρέπει να πάρει άσκηση.
     _msg_lower_for_ready_check = (user_input or "").lower()
     _is_not_ready_msg = any(p in _msg_lower_for_ready_check for p in _NOT_READY_PATTERNS)
-    if awaiting_questions and not wants_task and intent not in {"theory_question", "code_help"} and not _is_not_ready_msg:
+    # Αν η θεωρία έχει ήδη δειχθεί και ο μαθητής απάντησε με κάτι ουδέτερο/θετικό (όχι ερώτηση,
+    # όχι "δεν είμαι έτοιμος", όχι άσχετο σχόλιο → intent="other"), θεωρούμε ότι είναι έτοιμος.
+    # Εξαίρεση: intent="other" = άσχετο σχόλιο → ΔΕΝ μετατρέπουμε αυτόματα, πάμε στον freeform handler.
+    if awaiting_questions and not wants_task and intent not in {"theory_question", "code_help", "other"} and not _is_not_ready_msg:
         wants_task = True
     next_chapter_request = intent == "advance_lesson"
     menu_choice = intent if intent.startswith("menu_") else None  # "menu_1", "menu_2", "menu_3" ή None
@@ -1159,11 +1190,6 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
         )
     elif is_correct:
         if assessment_decision == "advance":
-            # Συχνά λάθη — αναφέρουμε ΜΕΣΑ στο LLM context
-            error_ctx = ""
-            if frequent_errors:
-                top = [_ERROR_CATEGORY_LABELS.get(e, e) for e in frequent_errors[:2]]
-                error_ctx = f" Σημείωσε ότι σε αυτή την ενότητα δυσκολεύτηκε με: {' και '.join(top)}."
             # Dynamic difficulty probe
             probe_ctx = ""
             if difficulty_probe_direction == "upgrade":
@@ -1171,19 +1197,15 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             elif difficulty_probe_direction == "downgrade" and experience != "beginner":
                 probe_ctx = " Επίσης ανακοίνωσε ότι ξεπέρασε τις δυσκολίες και επιστρέφετε σιγά-σιγά στις πιο απαιτητικές ασκήσεις."
             congrats = _generate_mentor_response(
-                context=f"Ο μαθητής έλυσε σωστά την άσκηση '{lesson_title}'. Συγχάρεσέ τον και ρώτα αν θέλει να προχωρήσει στην '{next_lesson_title}'.{error_ctx}{probe_ctx}",
+                context=f"Ο μαθητής έλυσε σωστά την άσκηση '{lesson_title}'. Συγχάρεσέ τον και ρώτα αν θέλει να προχωρήσει στην '{next_lesson_title}'.{probe_ctx}",
                 indicative="π.χ. 'Εξαιρετικά! Πάμε στα...' ή 'Μπράβο! Θέλεις να δούμε τα...'",
                 tone="ενθουσιαστικά, ζεστά"
             )
             deterministic_content = f"{congrats}\n\n[ASSESSMENT:ADVANCE]"
         else:
             # Σωστό αλλά χρειάζεται άλλη άσκηση
-            error_ctx = ""
-            if frequent_errors:
-                top = [_ERROR_CATEGORY_LABELS.get(e, e) for e in frequent_errors[:2]]
-                error_ctx = f" Δυσκολεύτηκε ιδιαίτερα με: {' και '.join(top)}."
             congrats = _generate_mentor_response(
-                context=f"Ο μαθητής έλυσε σωστά αλλά χρειάστηκε πολλές προσπάθειες.{error_ctx} Συγχάρεσέ τον και εξήγησε ότι μία ακόμα άσκηση θα παγιώσει την κατανόηση — πες του να γράψει 'προχωράμε'.",
+                context=f"Ο μαθητής έλυσε σωστά αλλά χρειάστηκε πολλές προσπάθειες. Συγχάρεσέ τον και εξήγησε ότι μία ακόμα άσκηση θα παγιώσει την κατανόηση — πες του να γράψει 'προχωράμε'.",
                 indicative="π.χ. 'Μπράβο που το έλυσες! Ας κάνουμε ακόμα μια για σιγουριά...'",
                 tone="ενθαρρυντικά, φιλικά"
             )
@@ -1282,10 +1304,10 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             hint_text = _generate_hint_with_llm(debug_report, task, difficulty, understanding_level, assessment_feedback, frequent_errors, avg_hints_per_task, hint_count)
             hint_wrap = _generate_mentor_response(
                 context=f"Ο μαθητής ζητά βοήθεια με τον κώδικά του. Γράψε μόνο μια εισαγωγική φράση — η υπόδειξη ακολουθεί αυτούσια αμέσως μετά.",
-                indicative="π.χ. 'Κοίτα αυτό:' ή 'Ας δούμε μαζί:'",
+                indicative="π.χ. 'Κοίτα εδώ:' ή 'Πρόσεξε:' ή 'Ας δούμε:'",
                 tone="παιδαγωγικά, φιλικά",
                 brief=True,
-                must_not="επαναλάβεις ή επεκτείνεις την υπόδειξη — αυτή ακολουθεί αυτούσια αμέσως μετά"
+                must_not="αρχίσεις με 'Πώς μπορώ να σε βοηθήσω' ή παρόμοιες γενικές ρητορικές φράσεις — πήγαινε κατευθείαν στην εισαγωγή"
             )
             deterministic_content = f"{hint_wrap}\n\n{hint_text}\n\n{decision_tag}\n[HINT]"
         elif intent == "code_help" and task_started:
@@ -1376,10 +1398,10 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             probe_ctx = " Επίσης ανακοίνωσε ότι βλέπεις ότι δυσκολεύεται και θα δοκιμάσεις πιο απλές ασκήσεις για λίγο — τόνισε ότι δεν είναι πρόβλημα και μπορεί να ζητήσει δυσκολότερες όποτε θέλει."
         hint_wrap = _generate_mentor_response(
             context=f"Ο κώδικας του μαθητή έχει λάθος. Γράψε μόνο μια εισαγωγική φράση — η υπόδειξη ακολουθεί αυτούσια αμέσως μετά.{probe_ctx}",
-            indicative="π.χ. 'Βλέπω κάτι εδώ:' ή 'Κοίτα αυτό:'",
+            indicative="π.χ. 'Βλέπω κάτι εδώ:' ή 'Κοίτα αυτό:' ή 'Πρόσεξε:'",
             tone="παιδαγωγικά, φιλικά",
             brief=True,
-            must_not="επαναλάβεις ή επεκτείνεις την υπόδειξη — αυτή ακολουθεί αυτούσια αμέσως μετά"
+            must_not="αρχίσεις με 'Πώς μπορώ να σε βοηθήσω' ή παρόμοιες γενικές ρητορικές φράσεις — μία σύντομη κατευθυντήρια φράση μόνο"
         )
         deterministic_content = f"{hint_wrap}\n\n{hint_text}\n\n{decision_tag}\n[HINT]"
     else:
