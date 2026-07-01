@@ -115,6 +115,11 @@ def _extract_expected_from_task(current_task: str):
     name_matches = re.findall(r"(?:όνομα|μεταβλητή|συνάρτηση)\s+([A-Za-z_][A-Za-z0-9_]*)", task)
     expectations["names"].extend(name_matches)
 
+    # Αναγνωρίζει "λίστα X" (π.χ. "λίστα colors") ως αναμενόμενο όνομα μεταβλητής
+    for lname in re.findall(r"λίστα\s+([A-Za-z_][A-Za-z0-9_]*)", task, re.IGNORECASE):
+        if lname not in expectations["names"]:
+            expectations["names"].append(lname)
+
     colon_match = re.search(r"μεταβλητ[^:]*:\s*([^\.\n]+)", task, re.IGNORECASE)
     if colon_match:
         raw_names = colon_match.group(1)
@@ -459,6 +464,28 @@ def assessment_node(state):# Κύρια λογική του Assessment Agent
                 "assessment_decision": decision,
                 "understanding_level": ulevel,
             }
+
+        # Λίστα με ΜΟΝΟ κενά strings → απαράδεκτο (π.χ. scores=['','',''])
+        if "Lists" in current_lesson:
+            try:
+                _ltree = ast.parse(student_code)
+                for _lnode in ast.walk(_ltree):
+                    if isinstance(_lnode, ast.Assign) and isinstance(_lnode.value, ast.List):
+                        _elts = _lnode.value.elts
+                        if _elts and any(
+                            isinstance(e, ast.Constant) and e.value == "" for e in _elts
+                        ):
+                            _ulevel = _understanding_level(0, attempts_count, hint_count, False)
+                            _raw = "Η λίστα περιέχει μόνο κενά strings (''). Τα στοιχεία πρέπει να έχουν πραγματικές τιμές."
+                            return {
+                                "is_correct": False,
+                                "assessment_feedback": f"[EMPTY_LIST] {_generate_assessment_feedback(False, _raw, current_task, _ulevel)}",
+                                "assessment_score": 0,
+                                "assessment_decision": "support" if attempts_count >= 2 else "repeat",
+                                "understanding_level": _ulevel,
+                            }
+            except Exception:
+                pass
 
         strict_ok, strict_failures = _strict_task_matching(student_code, current_task)
         if not strict_ok:

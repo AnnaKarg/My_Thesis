@@ -322,11 +322,43 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
         recap = await generate_session_recap_async(history_pairs, lesson_name, user.username)
 
         if recap:
-            welcome_message = f"Καλώς ήρθες ξανά, {user.username}!\n\n{recap}\n\nΘέλεις να συνεχίσουμε από εκεί που σταματήσαμε;"
+            welcome_message = f"Καλώς ήρθες ξανά, {user.username}!\n\n{recap}\n\nΘέλεις να συνεχίσουμε απευθείας ή να ξαναδούμε πρώτα τη θεωρία της ενότητας **{lesson_name}**;"
         else:
             welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
+
+        # Spaced Repetition Warm-up (Ebbinghaus): αν έχουν περάσει >2 μέρες από την τελευταία συνεδρία
+        # και ο μαθητής έχει ήδη κάνει profile check, ζητάμε recall της προηγούμενης ενότητας.
+        if user.profile_checked:
+            try:
+                last_entry = db_history[-1]
+                if last_entry.created_at:
+                    last_ts = datetime.fromisoformat(last_entry.created_at.replace("Z", "+00:00"))
+                    now_ts = datetime.now(timezone.utc)
+                    days_away = (now_ts - last_ts).total_seconds() / 86400
+                    if days_away > 2:
+                        prev_idx = max(0, user.current_lesson_id - 2)
+                        prev_lesson = lessons_content.get("lessons", [])[prev_idx] if prev_idx < len(lessons_content.get("lessons", [])) else None
+                        warmup_q = prev_lesson.get("warmup_question", "") if prev_lesson else ""
+                        if warmup_q:
+                            welcome_message += f"\n\n---\n\n**Επανάληψη σπαγγένης μάθησης:** {warmup_q}"
+            except Exception:
+                pass
     else:
         welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
+
+    # Open Learner Model (Bull & Kay): mastery % ανά ενότητα — εμφανίζεται στο frontend
+    _ul_to_mastery = {"needs_support": 20, "developing": 50, "good": 75, "strong": 95}
+    _current_mastery = _ul_to_mastery.get(user.understanding_level or "developing", 50)
+    mastery_profile = []
+    for lesson_obj in lessons_content.get("lessons", []):
+        lid = lesson_obj.get("id", 0)
+        if lid < user.current_lesson_id:
+            pct = 100
+        elif lid == user.current_lesson_id:
+            pct = _current_mastery
+        else:
+            pct = 0
+        mastery_profile.append({"id": lid, "title": lesson_obj.get("title", ""), "mastery": pct})
 
     new_session_id = int(time.time())
     db.add(ChatHistory(
@@ -343,6 +375,8 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
         "current_lesson_id": user.current_lesson_id,
         "profile_checked": user.profile_checked,
         "session_id": new_session_id,
+        "experience_level": user.experience_level or "beginner",
+        "mastery_profile": mastery_profile,
     }
 
 @router.get("/history/{user_id}/sessions")
@@ -407,7 +441,11 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         }
 
     # 1. Profile Check Logic (Beginner vs Expert) — LLM-based classification
-    is_first_login = len(db_history) == 0
+    # ΠΡΟΣΟΧΗ: όχι len(db_history) == 0 — το /session/welcome εισάγει πάντα ένα welcome
+    # μήνυμα ΠΡΙΝ το πρώτο πραγματικό μήνυμα του μαθητή, άρα db_history έχει ήδη 1 εγγραφή
+    # (το welcome, role="ai") όταν φτάνει το πρώτο chat request. Ελέγχουμε αν υπάρχει ΚΑΝΕΝΑ
+    # ανθρώπινο μήνυμα — αυτό είναι το πραγματικό "έχει μιλήσει ποτέ ο μαθητής;".
+    is_first_login = not any(h.role == "human" for h in db_history)
     profile_soft_defaulted = False
     if not user.profile_checked:
         profile_result = await classify_profile_async(request.message)
@@ -491,10 +529,23 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             user.active_success_criteria = "[]"
             task_started = False
             effective_event_type = "same_chapter_practice"
-        # else (other): ερώτηση/σχόλιο → το pending_advance παραμένει, ο mentor απαντά κανονικά
+        else:
+            # ερώτηση/σχόλιο → το pending_advance παραμένει, ο mentor απαντά κανονικά.
+            # Αν ζητά θεωρία ή έχει ερώτηση, ορίζουμε task_started=False ώστε το context
+            # να μην είναι "εργάζεται σε άσκηση" — αποτρέπει λανθασμένη δρομολόγηση σε άσκηση.
+            _pending_other_lower = (request.message or "").lower()
+            if any(kw in _pending_other_lower for kw in ["θεωρια", "θεωρία", "εξηγησ", "γιατί", "γιατι", "πώς", "πως", "τι είναι", "τι ειναι"]):
+                task_started = False
     # ─────────────────────────────────────────────────────────────────────────
 
     if reset_for_next_lesson:
+        # Legacy fallback (βλ. _should_reset_for_next_lesson) — καθαρίζουμε ΠΛΗΡΩΣ το
+        # παλιό μάθημα ώστε να μη μείνουν κατάλοιπα (task/criteria/lesson_id) από πριν.
+        user.current_lesson_id += 1
+        user.pending_advance = False
+        user.active_task_lesson_id = 0
+        user.active_task_text = ""
+        user.active_success_criteria = "[]"
         task_started = False
         awaiting_questions = False
         hint_count = 0
@@ -548,9 +599,14 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         current_task, resolved_success_criteria = "", []
     performance_summary = _build_performance_summary(db_history, user)
     
+    # Καθαρό student_code σε κάθε μετάβαση σε ΝΕΑ άσκηση/μάθημα — αποτρέπει παλιό κώδικα
+    # (π.χ. από προηγούμενη λυμένη άσκηση) να αξιολογηθεί κατά λάθος πάνω σε νέα κριτήρια.
+    # Στην πράξη το frontend ήδη στέλνει code="" σε μηνύματα χωρίς submission, αλλά αυτό
+    # είναι η ντετερμινιστική εγγύηση στο backend, ανεξάρτητη από τη συμπεριφορά του client.
+    _is_new_task_transition = reset_for_next_lesson or effective_event_type in ("same_chapter_practice", "lesson_advanced")
     state = {
         "messages": formatted_history,
-        "student_code": "" if reset_for_next_lesson else request.code,
+        "student_code": "" if _is_new_task_transition else request.code,
         "current_lesson_id": user.current_lesson_id,
         "current_lesson": lesson_name,
         "current_task": current_task,
@@ -574,6 +630,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         "profile_soft_defaulted": profile_soft_defaulted,
         "difficulty_probe_direction": difficulty_probe_direction,
         "avg_hints_per_task": float(user.avg_hints_per_task or 0.0),
+        "frustration_score": min(3, hint_count + (1 if current_total_attempts >= 3 else 0)),
     }
 
     output = {}
@@ -710,5 +767,6 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         "is_correct": code_was_correct,
         "assessment_score": assessment_score,
         "assessment_decision": assessment_decision,
-        "course_completed": course_completed
+        "course_completed": course_completed,
+        "experience_level": user.experience_level or "beginner",
     }

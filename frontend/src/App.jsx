@@ -34,7 +34,13 @@ export default function App() {
   const [taskActive, setTaskActive] = useState(false);
   const [hintStage, setHintStage] = useState(0);        // 0=καμία υπόδειξη, 1/2/3=έχουν σταλεί
   const [lastActivityTime, setLastActivityTime] = useState(null); // τελευταία ενέργεια (start ή υποβολή)
-  const HINT_DELAYS = [40000, 60000, 90000]; // ms μεταξύ υποδείξεων
+  const [experienceLevel, setExperienceLevel] = useState('beginner');
+  const [masteryProfile, setMasteryProfile] = useState([]);
+  // Adaptive hint timer: beginner χρειάζεται περισσότερο χρόνο (Cognitive Load Theory)
+  // expert: 40s/60s/90s (αδιέξοδο εντοπίζεται γρηγορότερα), beginner: 70s/90s/120s
+  const HINT_DELAYS = experienceLevel === 'expert'
+    ? [40000, 60000, 90000]
+    : [70000, 90000, 120000];
   const [code, setCode] = useState('# Γράψε τον κώδικά σου εδώ...');
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
@@ -86,6 +92,8 @@ export default function App() {
       const res = await axios.get(`${API_BASE}/session/${targetUser.id}/welcome`);
       setMessages([{ role: 'ai', content: res.data.message }]);
       if (res.data.session_id) setCurrentSessionId(res.data.session_id);
+      if (res.data.experience_level) setExperienceLevel(res.data.experience_level);
+      if (res.data.mastery_profile) setMasteryProfile(res.data.mastery_profile);
     } catch (err) {
       setMessages([{ role: 'ai', content: `Γεια σου ${targetUser.username}! Πριν συνεχίσουμε, έχεις κάποια απορία;` }]);
     }
@@ -304,6 +312,7 @@ export default function App() {
       const mentorResponse = res.data?.mentor_response || "Δεν έλαβα απάντηση από τον Mentor.";
       const isCorrect = Boolean(res.data?.is_correct);
       const responseComplete = Boolean(res.data?.course_completed);
+      if (res.data?.experience_level) setExperienceLevel(res.data.experience_level);
 
       setMessages(prev => [...prev, { role: 'ai', content: mentorResponse }]);
 
@@ -470,6 +479,36 @@ export default function App() {
               <span style={{ fontSize: '0.78rem', background: '#222', color: '#555', padding: '4px 12px', borderRadius: '20px' }}>Σύντομα...</span>
             </div>
           </div>
+
+          {/* Open Learner Model — Η πρόοδός μου (Bull & Kay, 2010) */}
+          {masteryProfile.length > 0 && (
+            <div style={{ marginTop: '52px', width: '100%', maxWidth: '560px' }}>
+              <h2 style={{ fontSize: '1rem', color: '#aaa', fontWeight: 600, marginBottom: '18px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                Η πρόοδός μου
+              </h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {masteryProfile.map(({ id, title, mastery }) => (
+                  <div key={id}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                      <span style={{ fontSize: '0.88rem', color: mastery === 0 ? '#444' : '#ccc' }}>{id}. {title}</span>
+                      <span style={{ fontSize: '0.82rem', color: mastery === 100 ? '#4caf50' : mastery === 0 ? '#444' : '#f9a825', fontWeight: 600 }}>
+                        {mastery}%
+                      </span>
+                    </div>
+                    <div style={{ background: '#2a2a2a', borderRadius: '6px', height: '7px', overflow: 'hidden' }}>
+                      <div style={{
+                        width: `${mastery}%`,
+                        height: '100%',
+                        borderRadius: '6px',
+                        background: mastery === 100 ? '#4caf50' : mastery >= 75 ? '#66bb6a' : mastery >= 50 ? '#f9a825' : mastery > 0 ? '#ef5350' : 'transparent',
+                        transition: 'width 0.5s ease',
+                      }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -494,7 +533,7 @@ export default function App() {
               {historyModal.messages.map((m, i) => (
                 <div key={i} style={{ alignSelf: m.role === 'human' ? 'flex-end' : 'flex-start', maxWidth: '88%' }}>
                   <div style={{ background: m.role === 'human' ? '#007acc' : '#3e3e42', padding: '12px 16px', borderRadius: '12px', fontSize: '0.97rem', lineHeight: '1.55', wordBreak: 'break-word' }}>
-                    <ReactMarkdown>{m.content}</ReactMarkdown>
+                    <ReactMarkdown components={{ pre: ({node, ...props}) => <pre style={{ overflowX: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '0.5em 0' }} {...props} /> }}>{m.content}</ReactMarkdown>
                   </div>
                 </div>
               ))}
@@ -578,7 +617,7 @@ export default function App() {
             return messages.map((m, i) => (
               <div key={i} style={{ alignSelf: m.role === 'human' ? 'flex-end' : 'flex-start', maxWidth: '90%' }}>
                 <div style={{ background: m.role === 'human' ? '#007acc' : '#3e3e42', padding: '16px 18px', borderRadius: '15px', fontSize: '1.05rem', lineHeight: '1.6', wordBreak: 'break-word', overflowWrap: 'break-word', minWidth: 0 }}>
-                  <ReactMarkdown>
+                  <ReactMarkdown components={{ pre: ({node, ...props}) => <pre style={{ overflowX: 'auto', maxWidth: '100%', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '0.5em 0' }} {...props} /> }}>
                     {sanitizeMentorText(m.content)}
                   </ReactMarkdown>
 
@@ -664,7 +703,7 @@ export default function App() {
                 quickSuggestions: false,
                 suggestOnTriggerCharacters: false,
                 acceptSuggestionOnEnter: 'off',
-                wordBasedSuggestions: 'off',
+                wordBasedSuggestions: 'currentDocument',
               }}
             />
             {!editorEnabled && (

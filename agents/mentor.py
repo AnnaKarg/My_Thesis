@@ -253,6 +253,24 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
     if "```" in stripped or stripped.lower().startswith("υποβολή κώδικα") or stripped.upper() == "CODE_SUBMISSION":
         return "code_help"
 
+    # ── Deterministic: "θεωρία"/"θύμισέ μου"/"υπενθύμισε" = πάντα theory_question ──
+    # Αποτρέπει το μικρό LLM να ερμηνεύσει "Θεωρία" ή "Θύμισέ μου πώς κάνω X" ως wants_task.
+    # Παρατηρήθηκε: "Θυμισε μου πως κανω λιστα" ταξινομήθηκε ως wants_task παρά τη ρητή
+    # οδηγία "ΟΧΙ wants_task αν ρωτάει 'πώς'" — το μικρό LLM δεν την ακολούθησε αξιόπιστα.
+    _lower_stripped = stripped.lower()
+    _reminder_words = ["θεωρια", "θεωρία", "θυμισε", "θύμισε", "υπενθυμισε", "υπενθύμισε", "ξαναπε", "ξαναπέ"]
+    if any(w in _lower_stripped for w in _reminder_words):
+        return "theory_question"
+
+    # ── Deterministic: "Οχι + κατάλαβα/έμαθα" = student confirmed understanding ──
+    # "Οχι τα καταλαβα" / "Οχι τα εμαθα" = "No [questions], I got it" = wants_task.
+    # Εξαίρεση: "δεν" πριν το "καταλαβα" = αρνητική κατανόηση.
+    _has_understood = any(w in _lower_stripped for w in ["καταλαβ", "κατάλαβ", "εμαθ", "έμαθ"])
+    _starts_with_no = _lower_stripped.startswith("οχι") or _lower_stripped.startswith("όχι")
+    _has_negation = "δεν " in _lower_stripped or "δε " in _lower_stripped
+    if _starts_with_no and _has_understood and not _has_negation:
+        return "wants_task"
+
     # ── Gibberish / ακατανόητο input ──────────────────────────────────────────
     if _is_gibberish(stripped):
         return "other"
@@ -811,6 +829,19 @@ def _generate_targeted_hint(debug_report: str, difficulty: str, assessment_feedb
         return (
             "Λείπει η πρόσβαση σε στοιχείο λίστας με index. "
             "Για να πάρεις το πρώτο στοιχείο γράψε `λίστα[0]`, για το δεύτερο `λίστα[1]` κ.ο.κ."
+        )
+
+    if "empty_list" in report:
+        return (
+            "Η λίστα σου είναι άδεια `[]` — δεν έχει κανένα στοιχείο μέσα. "
+            "Πρόσθεσε τα στοιχεία απευθείας, π.χ. `colors = [\"red\", \"green\", \"blue\"]`."
+        )
+
+    if "wrong_index" in report:
+        return (
+            "Ο index που χρησιμοποιείς δεν είναι ο σωστός. "
+            "Θυμήσου: `λίστα[0]` δίνει το **πρώτο** στοιχείο, `λίστα[1]` το δεύτερο κ.ο.κ. — "
+            "η αρίθμηση ξεκινά από 0, όχι από 1."
         )
 
     if "print_as_variable" in report:
@@ -1407,9 +1438,18 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             deterministic_content = f"{task_intro}\n\n{task}\n\n[BUTTON:START_TASK]"
     elif intent in {"theory_question", "code_help"}:
         msg_lower = (user_input or "").lower()
-        wants_full_theory = any(kw in msg_lower for kw in [
-            "θεωρια", "θεωρία", "ξαναπε", "ξαναπέ", "υπενθυμισε", "υπενθύμισε", "θυμισε", "θύμισε"
-        ])
+        # "θυμισε/υπενθυμισε" ΧΩΡΙΣ ρητή αναφορά σε "θεωρία" και ΜΕ ερώτηση "πώς/τι είναι" σημαίνει
+        # συγκεκριμένη έννοια (πιθανόν από προηγούμενη ενότητα) — π.χ. "θύμισέ μου πώς κάνω λίστα".
+        # Σε αυτή την περίπτωση ΔΕΝ ξαναδείχνουμε την τρέχουσα θεωρία (λάθος ενότητα) — πάει σε
+        # _answer_theory_question που έχει πρόσβαση σε ΟΛΕΣ τις προηγούμενες ενότητες.
+        _asks_specific_concept = any(w in msg_lower for w in ["πως", "πώς", "τι ειναι", "τι είναι"])
+        wants_full_theory = (
+            any(kw in msg_lower for kw in ["θεωρια", "θεωρία", "ξαναπε", "ξαναπέ"])
+            or (
+                any(kw in msg_lower for kw in ["υπενθυμισε", "υπενθύμισε", "θυμισε", "θύμισε"])
+                and not _asks_specific_concept
+            )
+        )
         if wants_full_theory:
             outro = _generate_mentor_response(
                 context=f"Ο μαθητής ξαναδιάβασε τη θεωρία '{lesson_title}'. Ρώτα αν έχει απορίες.",

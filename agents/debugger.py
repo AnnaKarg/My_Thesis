@@ -180,6 +180,33 @@ def _deterministic_findings(tree, success_criteria, current_task=""):
         categories.add("missing_index")
         findings.append("Απουσία πρόσβασης με index ενώ ζητείται.")
 
+    # Λίστα υπάρχει αλλά είναι άδεια ενώ η εκφώνηση ζητά στοιχεία (append exercises εξαιρούνται)
+    if analyzer.has_list and "append" not in criteria_text:
+        _all_lists = [n for n in ast.walk(tree) if isinstance(n, ast.List)]
+        _has_nonempty = any(len(n.elts) > 0 for n in _all_lists)
+        _has_empty = any(len(n.elts) == 0 for n in _all_lists)
+        if _has_empty and not _has_nonempty:
+            if any(kw in criteria_text for kw in ["στοιχεί", "string", "αριθμ", "τιμ"]):
+                categories.add("empty_list")
+                findings.append(
+                    "Η λίστα σου είναι άδεια ([]). "
+                    "Η εκφώνηση ζητά στοιχεία μέσα σε αυτήν — πρόσθεσέ τα απευθείας."
+                )
+
+    # Λάθος τιμή index: η εκφώνηση ζητά [0] αλλά χρησιμοποιείται διαφορετικό index
+    if "[0]" in criteria_text and analyzer.has_index:
+        _has_zero_idx = any(
+            isinstance(n, ast.Subscript)
+            and isinstance(n.slice, ast.Constant)
+            and n.slice.value == 0
+            for n in ast.walk(tree)
+        )
+        if not _has_zero_idx:
+            categories.add("wrong_index")
+            findings.append(
+                "Χρησιμοποιείς λάθος index. Η εκφώνηση ζητά [0] για να πάρεις το πρώτο στοιχείο."
+            )
+
     # Bug 1: αθροιστής (+=) απαιτείται αλλά λείπει
     if ("άθροισμ" in criteria_text or "αθροιστ" in criteria_text) and analyzer.has_for and not analyzer.has_aug_assign:
         categories.add("missing_accumulator")
