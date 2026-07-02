@@ -30,6 +30,9 @@ class _Analyzer(ast.NodeVisitor):
         self.has_append = False
         self.has_index = False
         self.has_list = False
+        self.has_nonempty_list = False   # True αν υπάρχει τουλάχιστον μία μη-κενή λίστα literal
+        self.has_empty_list = False      # True αν υπάρχει τουλάχιστον μία κενή λίστα literal []
+        self.has_zero_index = False      # True αν υπάρχει subscript με literal index 0 (π.χ. λίστα[0])
         self.has_print = False
         self.has_empty_print = False     # True αν υπάρχει print() χωρίς ορίσματα
         self.list_has_only_strings = False  # True αν λίστα περιέχει μόνο string literals
@@ -126,12 +129,18 @@ class _Analyzer(ast.NodeVisitor):
 
     def visit_List(self, node):
         self.has_list = True
-        if node.elts and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.elts):
-            self.list_has_only_strings = True
+        if node.elts:
+            self.has_nonempty_list = True
+            if all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.elts):
+                self.list_has_only_strings = True
+        else:
+            self.has_empty_list = True
         self.generic_visit(node)
 
     def visit_Subscript(self, node):
         self.has_index = True
+        if isinstance(node.slice, ast.Constant) and node.slice.value == 0:
+            self.has_zero_index = True
         self.generic_visit(node)
 
 def _deterministic_findings(tree, success_criteria, current_task=""):
@@ -181,31 +190,21 @@ def _deterministic_findings(tree, success_criteria, current_task=""):
         findings.append("Απουσία πρόσβασης με index ενώ ζητείται.")
 
     # Λίστα υπάρχει αλλά είναι άδεια ενώ η εκφώνηση ζητά στοιχεία (append exercises εξαιρούνται)
-    if analyzer.has_list and "append" not in criteria_text:
-        _all_lists = [n for n in ast.walk(tree) if isinstance(n, ast.List)]
-        _has_nonempty = any(len(n.elts) > 0 for n in _all_lists)
-        _has_empty = any(len(n.elts) == 0 for n in _all_lists)
-        if _has_empty and not _has_nonempty:
-            if any(kw in criteria_text for kw in ["στοιχεί", "string", "αριθμ", "τιμ"]):
-                categories.add("empty_list")
-                findings.append(
-                    "Η λίστα σου είναι άδεια ([]). "
-                    "Η εκφώνηση ζητά στοιχεία μέσα σε αυτήν — πρόσθεσέ τα απευθείας."
-                )
+    if (analyzer.has_list and "append" not in criteria_text
+            and analyzer.has_empty_list and not analyzer.has_nonempty_list):
+        if any(kw in criteria_text for kw in ["στοιχεί", "string", "αριθμ", "τιμ"]):
+            categories.add("empty_list")
+            findings.append(
+                "Η λίστα σου είναι άδεια ([]). "
+                "Η εκφώνηση ζητά στοιχεία μέσα σε αυτήν — πρόσθεσέ τα απευθείας."
+            )
 
     # Λάθος τιμή index: η εκφώνηση ζητά [0] αλλά χρησιμοποιείται διαφορετικό index
-    if "[0]" in criteria_text and analyzer.has_index:
-        _has_zero_idx = any(
-            isinstance(n, ast.Subscript)
-            and isinstance(n.slice, ast.Constant)
-            and n.slice.value == 0
-            for n in ast.walk(tree)
+    if "[0]" in criteria_text and analyzer.has_index and not analyzer.has_zero_index:
+        categories.add("wrong_index")
+        findings.append(
+            "Χρησιμοποιείς λάθος index. Η εκφώνηση ζητά [0] για να πάρεις το πρώτο στοιχείο."
         )
-        if not _has_zero_idx:
-            categories.add("wrong_index")
-            findings.append(
-                "Χρησιμοποιείς λάθος index. Η εκφώνηση ζητά [0] για να πάρεις το πρώτο στοιχείο."
-            )
 
     # Bug 1: αθροιστής (+=) απαιτείται αλλά λείπει
     if ("άθροισμ" in criteria_text or "αθροιστ" in criteria_text) and analyzer.has_for and not analyzer.has_aug_assign:

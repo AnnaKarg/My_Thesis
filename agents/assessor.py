@@ -413,6 +413,11 @@ def _understanding_level(score, attempts, hint_count, is_correct):
         return "needs_support"
     return "developing"
 
+# Χαρτογράφηση understanding_level → % mastery για το Open Learner Model (Bull & Kay) στο frontend.
+# Ζει εδώ, δίπλα στην _understanding_level(), ώστε τα δύο να μένουν συγχρονισμένα σε ένα σημείο
+# αντί για δύο ανεξάρτητα συντηρημένα dicts (routes.py είχε δικό του αντίγραφο πριν).
+UNDERSTANDING_LEVEL_TO_MASTERY_PCT = {"needs_support": 20, "developing": 50, "good": 75, "strong": 95}
+
 def assessment_node(state):# Κύρια λογική του Assessment Agent
     debug_report = state.get("debug_report", "")
     student_code = state.get("student_code", "")

@@ -21,6 +21,7 @@ from agents.mentor import (
     classify_pending_advance_intent_async,
     _wants_to_start_task,
 )
+from agents.assessor import UNDERSTANDING_LEVEL_TO_MASTERY_PCT
 
 router = APIRouter() # Δημιουργεί ένα router για να ορίσει τα API endpoints που σχετίζονται με το chat και την αυθεντικοποίηση
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto") # Ορίζει το context για την κρυπτογράφηση των κωδικών με bcrypt
@@ -335,9 +336,13 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
                     last_ts = datetime.fromisoformat(last_entry.created_at.replace("Z", "+00:00"))
                     now_ts = datetime.now(timezone.utc)
                     days_away = (now_ts - last_ts).total_seconds() / 86400
-                    if days_away > 2:
-                        prev_idx = max(0, user.current_lesson_id - 2)
-                        prev_lesson = lessons_content.get("lessons", [])[prev_idx] if prev_idx < len(lessons_content.get("lessons", [])) else None
+                    if days_away > 2 and user.current_lesson_id > 1:
+                        # Βρίσκουμε το ΠΡΟΗΓΟΥΜΕΝΟ μάθημα με βάση το id, όχι raw list index —
+                        # η λίστα lessons δεν είναι πάντα 1-προς-1 ευθυγραμμισμένη με id-1.
+                        prev_lesson = next(
+                            (l for l in lessons_content.get("lessons", []) if l.get("id") == user.current_lesson_id - 1),
+                            None,
+                        )
                         warmup_q = prev_lesson.get("warmup_question", "") if prev_lesson else ""
                         if warmup_q:
                             welcome_message += f"\n\n---\n\n**Επανάληψη σπαγγένης μάθησης:** {warmup_q}"
@@ -347,8 +352,7 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
         welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
 
     # Open Learner Model (Bull & Kay): mastery % ανά ενότητα — εμφανίζεται στο frontend
-    _ul_to_mastery = {"needs_support": 20, "developing": 50, "good": 75, "strong": 95}
-    _current_mastery = _ul_to_mastery.get(user.understanding_level or "developing", 50)
+    _current_mastery = UNDERSTANDING_LEVEL_TO_MASTERY_PCT.get(user.understanding_level or "developing", 50)
     mastery_profile = []
     for lesson_obj in lessons_content.get("lessons", []):
         lid = lesson_obj.get("id", 0)
@@ -531,11 +535,10 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             effective_event_type = "same_chapter_practice"
         else:
             # ερώτηση/σχόλιο → το pending_advance παραμένει, ο mentor απαντά κανονικά.
-            # Αν ζητά θεωρία ή έχει ερώτηση, ορίζουμε task_started=False ώστε το context
-            # να μην είναι "εργάζεται σε άσκηση" — αποτρέπει λανθασμένη δρομολόγηση σε άσκηση.
-            _pending_other_lower = (request.message or "").lower()
-            if any(kw in _pending_other_lower for kw in ["θεωρια", "θεωρία", "εξηγησ", "γιατί", "γιατι", "πώς", "πως", "τι είναι", "τι ειναι"]):
-                task_started = False
+            # task_started=False ΠΑΝΤΑ εδώ (όχι μόνο για συγκεκριμένες λέξεις-κλειδιά): η άσκηση
+            # μόλις λύθηκε σωστά, άρα ο μαθητής δεν είναι πια "mid-task" — ασαφές μήνυμα σε αυτό
+            # το σημείο είναι πολύ πιο πιθανό να είναι σχόλιο/ερώτηση παρά συνέχιση της άσκησης.
+            task_started = False
     # ─────────────────────────────────────────────────────────────────────────
 
     if reset_for_next_lesson:
@@ -631,6 +634,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         "difficulty_probe_direction": difficulty_probe_direction,
         "avg_hints_per_task": float(user.avg_hints_per_task or 0.0),
         "frustration_score": min(3, hint_count + (1 if current_total_attempts >= 3 else 0)),
+        "previous_task": _previous_task_text or None,
     }
 
     output = {}
