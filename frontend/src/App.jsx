@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
-import { Send, Code2, Play, LogOut, Eye, EyeOff, BookOpen, Zap, FileCode } from 'lucide-react';
+import { Send, Code2, Play, LogOut, Eye, EyeOff, BookOpen, Zap, FileCode, TriangleAlert } from 'lucide-react';
 import './App.css';
 
 // Τοπικά: direct στο backend. Production (Vercel): μέσω proxy (/backend) — χωρίς CORS
@@ -19,6 +20,11 @@ export default function App() {
   const [showHistorySidebar, setShowHistorySidebar] = useState(false);
   const [historySessions, setHistorySessions] = useState([]);
   const [historyModal, setHistoryModal] = useState(null); // {title, messages}
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  // Custom tooltip (portal-based, ΟΧΙ position:absolute μέσα στο modal) — το native title ήταν
+  // αναξιόπιστο/αργό, και το πρώτο absolute-positioned πείραμα έκοβε πάνω/πλάγια από το modal
+  // overflow. Με portal στο document.body + fixed coordinates, ΔΕΝ κόβεται ποτέ από κανένα container.
+  const [struggleTooltip, setStruggleTooltip] = useState(null); // {id, top, left, placement}
   const [isRegistering, setIsRegistering] = useState(false);
   const [authForm, setAuthForm] = useState({ username: '', password: '' });
   const [authError, setAuthError] = useState('');
@@ -505,17 +511,70 @@ export default function App() {
             </div>
           </div>
 
-          {/* Open Learner Model — Η πρόοδός μου (Bull & Kay, 2010) */}
+          {/* Open Learner Model — Η πρόοδός μου (Bull & Kay, 2010) — κουμπί αντί για μόνιμα
+              ορατή ενότητα, ώστε να μη μετατοπίζεται το layout ανάλογα με το αν έχει φορτώσει. */}
           {masteryProfile.length > 0 && (
-            <div style={{ marginTop: '52px', width: '100%', maxWidth: '560px' }}>
-              <h2 style={{ fontSize: '1rem', color: '#aaa', fontWeight: 600, marginBottom: '18px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                Η πρόοδός μου
-              </h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                {masteryProfile.map(({ id, title, mastery }) => (
+            <button
+              onClick={() => setShowProgressModal(true)}
+              style={{ marginTop: '40px', background: '#1e1e1e', border: '2px solid #333', borderRadius: '14px', padding: '14px 28px', color: '#ccc', cursor: 'pointer', fontSize: '0.95rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '10px', transition: 'border-color 0.15s, transform 0.15s' }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = '#4caf50'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = '#333'; e.currentTarget.style.transform = 'translateY(0)'; }}
+            >
+              📊 Η πρόοδός μου
+            </button>
+          )}
+        </div>
+
+        {/* ── Progress Modal ──────────────────────────────────────────────── */}
+        {showProgressModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+            onClick={() => setShowProgressModal(false)}>
+            <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '560px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ padding: '16px 20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                <strong style={{ color: '#aaa', fontSize: '0.95rem' }}>📊 Η πρόοδός μου</strong>
+                <button onClick={() => setShowProgressModal(false)} style={{ background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: '1.3rem', lineHeight: 1 }}>✕</button>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '40px 24px 24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {masteryProfile.map(({ id, title, mastery, struggled, cohort_pct }) => (
                   <div key={id}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                      <span style={{ fontSize: '0.88rem', color: mastery === 0 ? '#444' : '#ccc' }}>{id}. {title}</span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                      <span style={{ fontSize: '0.9rem', color: mastery === 0 ? '#444' : '#ccc', display: 'flex', alignItems: 'center', gap: '7px' }}>
+                        {id}. {title}
+                        {struggled && (
+                          <span
+                            style={{ display: 'inline-flex', cursor: 'pointer' }}
+                            onMouseEnter={(e) => {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              const TOOLTIP_WIDTH = 220;
+                              const MARGIN = 10;
+                              let left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
+                              left = Math.max(MARGIN, Math.min(left, window.innerWidth - TOOLTIP_WIDTH - MARGIN));
+                              // Πάνω από το εικονίδιο εκτός αν δεν χωράει (κοντά στην κορυφή της οθόνης) —
+                              // τότε κάτω. Portal στο document.body: ΔΕΝ κόβεται από κανένα container.
+                              const placement = rect.top < 90 ? 'below' : 'above';
+                              const top = placement === 'above' ? rect.top - 8 : rect.bottom + 8;
+                              setStruggleTooltip({ id, top, left, placement });
+                            }}
+                            onMouseLeave={() => setStruggleTooltip(null)}
+                          >
+                            <TriangleAlert size={15} color="#f9a825" />
+                            {struggleTooltip && struggleTooltip.id === id && createPortal(
+                              <div style={{
+                                position: 'fixed', top: struggleTooltip.top, left: struggleTooltip.left,
+                                transform: struggleTooltip.placement === 'above' ? 'translateY(-100%)' : 'none',
+                                background: '#1a1a1a', border: '1px solid #f9a825', borderRadius: '8px',
+                                padding: '8px 12px', fontSize: '0.75rem', color: '#eee', whiteSpace: 'normal',
+                                width: '220px', textAlign: 'center', lineHeight: '1.4', zIndex: 1000,
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.4)', pointerEvents: 'none',
+                              }}>
+                                Σε αυτό το κεφάλαιο δυσκολεύτηκες — δώσε μεγαλύτερη προσοχή ή κάνε λίγη εξάσκηση.
+                              </div>,
+                              document.body
+                            )}
+                          </span>
+                        )}
+                      </span>
                       <span style={{ fontSize: '0.82rem', color: mastery === 100 ? '#4caf50' : mastery === 0 ? '#444' : '#f9a825', fontWeight: 600 }}>
                         {mastery}%
                       </span>
@@ -529,12 +588,17 @@ export default function App() {
                         transition: 'width 0.5s ease',
                       }} />
                     </div>
+                    {cohort_pct != null && (
+                      <div style={{ fontSize: '0.74rem', color: '#666', marginTop: '5px' }}>
+                        {cohort_pct}% των χρηστών έχουν φτάσει μέχρι εδώ
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     );
   }

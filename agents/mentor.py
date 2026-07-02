@@ -276,6 +276,19 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
         if _starts_with_no and _has_understood and not _has_negation:
             return "wants_task"
 
+    # Ρητό αίτημα βοήθειας ενώ δουλεύει σε άσκηση = πάντα code_help, ΟΧΙ "other".
+    # Παρατηρήθηκε: "Δεν ξερω πως να το κανω θελω βοηθεια" ταξινομήθηκε ως "other" (ασαφές)
+    # από το μικρό LLM, πυροδοτώντας γενική διευκρινιστική ερώτηση αντί για βοήθεια —
+    # παρόλο που η φράση είναι ήδη ξεκάθαρο αίτημα βοήθειας, δεν χρειάζεται διευκρίνιση.
+    if task_started:
+        _help_request_phrases = [
+            "θελω βοηθεια", "θέλω βοήθεια", "χρειαζομαι βοηθεια", "χρειάζομαι βοήθεια",
+            "δεν ξερω πως να", "δεν ξέρω πώς να", "δεν ξερω τι να κανω", "δεν ξέρω τι να κάνω",
+            "δεν ξερω απο που", "δεν ξέρω από πού", "δεν μπορω να το κανω", "δεν μπορώ να το κάνω",
+        ]
+        if any(p in _lower_stripped for p in _help_request_phrases):
+            return "code_help"
+
     # ── Gibberish / ακατανόητο input ──────────────────────────────────────────
     if _is_gibberish(stripped):
         return "other"
@@ -1493,12 +1506,40 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             _has_inline_code = any(kw in user_input for kw in [
                 "def ", "for ", "while ", "if ", "print(", "return ", "import "
             ])
+            # Ρητό γενικό αίτημα βοήθειας ("θέλω βοήθεια", "δεν ξέρω πώς να...") — προηγείται
+            # του _has_inline_question παρακάτω, γιατί τέτοιες φράσεις συχνά περιέχουν "πώς" αλλά
+            # ΔΕΝ είναι εννοιολογική ερώτηση προς εξήγηση θεωρίας· είναι αίτημα για ένα πρώτο βήμα
+            # πάνω στην ΤΡΕΧΟΥΣΑ άσκηση.
+            _is_general_help_request = any(p in _msg_lower_code for p in [
+                "θελω βοηθεια", "θέλω βοήθεια", "χρειαζομαι βοηθεια", "χρειάζομαι βοήθεια",
+                "δεν ξερω πως να", "δεν ξέρω πώς να", "δεν ξερω τι να κανω", "δεν ξέρω τι να κάνω",
+                "δεν ξερω απο που", "δεν ξέρω από πού", "δεν μπορω να το κανω", "δεν μπορώ να το κάνω",
+            ])
             _has_inline_question = any(q in _msg_lower_code for q in [
                 "τι κανω", "τι κάνω", "τι λαθ", "γιατι", "γιατί",
                 "πως", "πώς", "εκτυπ", "εμφαν", "τι εννο", "μπορω να",
             ])
-            if _has_inline_code or _has_inline_question:
-                # Απαντάμε βάσει του ορατού κώδικα/ερώτησης στο chat
+            if _has_inline_code:
+                # Απαντάμε βάσει του ορατού κώδικα στο chat
+                theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id)
+                deterministic_content = theory_answer
+            elif _is_general_help_request:
+                # Δεν έχει νόημα να ρωτήσουμε "τι εννοείς" — το είπε ήδη ξεκάθαρα. Δίνουμε ΕΝΑ
+                # συγκεκριμένο πρώτο βήμα για ΑΥΤΗ την άσκηση, βασισμένο στη θεωρία.
+                starter_hint = _generate_mentor_response(
+                    context=(
+                        f"Ο μαθητής ζήτησε ρητά βοήθεια ('{user_input}') επειδή δεν ξέρει πώς να ξεκινήσει την "
+                        f"άσκηση '{task}' — δεν έχει γράψει ή υποβάλει κανέναν κώδικα ακόμα. ΜΗΝ ρωτήσεις τι "
+                        f"εννοεί, το είπε ήδη. Δώσε ΕΝΑ συγκεκριμένο πρώτο βήμα: ποια δομή/εντολή να γράψει "
+                        f"πρώτη, βασισμένο ΑΠΟΚΛΕΙΣΤΙΚΑ στη ΘΕΩΡΙΑ — όχι ολόκληρη τη λύση."
+                    ),
+                    indicative="π.χ. 'Ξεκίνα γράφοντας for i in range(5): και μέσα του, με εσοχή, print(i).'",
+                    tone="υποστηρικτικά, καθοδηγητικά",
+                    must_not="δώσεις ολόκληρη τη λύση της άσκησης ή ζητήσεις διευκρίνιση αντί να βοηθήσεις"
+                )
+                deterministic_content = starter_hint
+            elif _has_inline_question:
+                # Απαντάμε βάσει της συγκεκριμένης ερώτησης στο chat
                 theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id)
                 deterministic_content = theory_answer
             else:

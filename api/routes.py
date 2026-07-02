@@ -281,10 +281,54 @@ async def get_db():
     finally:
         await session.close()
 
-def _compute_mastery_profile(user: User, db_history) -> list:
+_STRUGGLE_ATTEMPTS_THRESHOLD = 3
+_STRUGGLE_HINTS_THRESHOLD = 2
+
+def _compute_lesson_struggle_flags(db_history) -> dict:
+    """Ανασυνθέτει ιστορικά attempts/hints ΑΝΑ ΟΛΟΚΛΗΡΩΜΕΝΟ μάθημα σαρώνοντας το chat history μία
+    φορά, σπάζοντας σε τμήματα στα [ASSESSMENT:ADVANCE] boundaries (ίδιο μοτίβο με
+    _count_attempts_since_last_task/_count_hints, αλλά για ΟΛΑ τα περασμένα μαθήματα, όχι μόνο
+    το τρέχον). Επιστρέφει {lesson_id: True/False} — True αν χρειάστηκε πολλές προσπάθειες/hints.
+    Το τρέχον (μη ολοκληρωμένο ακόμα) μάθημα δεν παίρνει flag."""
+    lesson_id = 1
+    attempts = 0
+    hints = 0
+    flags = {}
+    for h in db_history:
+        if h.role == "human":
+            attempts += (h.attempts_count or 0)
+        elif h.role == "ai":
+            content = h.content or ""
+            if "[HINT]" in content:
+                hints += 1
+            if "[ASSESSMENT:ADVANCE]" in content:
+                flags[lesson_id] = (
+                    attempts >= _STRUGGLE_ATTEMPTS_THRESHOLD or hints >= _STRUGGLE_HINTS_THRESHOLD
+                )
+                lesson_id += 1
+                attempts = 0
+                hints = 0
+    return flags
+
+async def _compute_cohort_completion_pct(db: AsyncSession, total_lessons: int) -> dict:
+    """Για κάθε lesson_id, τι ποσοστό ΟΛΩΝ των χρηστών έχει φτάσει ή προσπεράσει αυτό το μάθημα
+    (current_lesson_id >= lesson_id) — απλό aggregate πάνω στο users table, χωρίς LLM."""
+    result = await db.execute(select(User.current_lesson_id))
+    all_lesson_ids = [row[0] for row in result.all()]
+    total_users = len(all_lesson_ids)
+    if total_users == 0:
+        return {}
+    return {
+        lid: round(sum(1 for clid in all_lesson_ids if clid >= lid) / total_users * 100)
+        for lid in range(1, total_lessons + 1)
+    }
+
+def _compute_mastery_profile(user: User, db_history, struggle_flags: dict = None, cohort_pct: dict = None) -> list:
     """Open Learner Model (Bull & Kay): mastery % ανά ενότητα — εμφανίζεται στο frontend.
     0% αν δεν έχει γίνει ΚΑΜΙΑ υποβολή στο τρέχον μάθημα ακόμα — το "developing" είναι το
     DB default για νέους λογαριασμούς, δεν σημαίνει ότι όντως δουλεύει στο επίπεδο εκείνο."""
+    struggle_flags = struggle_flags or {}
+    cohort_pct = cohort_pct or {}
     current_mastery = (
         UNDERSTANDING_LEVEL_TO_MASTERY_PCT.get(user.understanding_level or "developing", 50)
         if _has_recent_attempts(db_history) else 0
@@ -298,7 +342,13 @@ def _compute_mastery_profile(user: User, db_history) -> list:
             pct = current_mastery
         else:
             pct = 0
-        mastery_profile.append({"id": lid, "title": lesson_obj.get("title", ""), "mastery": pct})
+        mastery_profile.append({
+            "id": lid,
+            "title": lesson_obj.get("title", ""),
+            "mastery": pct,
+            "struggled": bool(struggle_flags.get(lid, False)),
+            "cohort_pct": cohort_pct.get(lid),
+        })
     return mastery_profile
 
 @router.post("/register") # Endpoint για την εγγραφή νέου χρήστη
@@ -338,9 +388,12 @@ async def session_progress(user_id: int, db: AsyncSession = Depends(get_db)):
     )
     db_history = history_query.scalars().all()
 
+    struggle_flags = _compute_lesson_struggle_flags(db_history)
+    cohort_pct = await _compute_cohort_completion_pct(db, TOTAL_LESSONS)
+
     return {
         "experience_level": user.experience_level or "beginner",
-        "mastery_profile": _compute_mastery_profile(user, db_history),
+        "mastery_profile": _compute_mastery_profile(user, db_history, struggle_flags, cohort_pct),
     }
 
 @router.get("/session/{user_id}/welcome") # Endpoint για να πάρει το μήνυμα καλωσορίσματος και την τρέχουσα κατάσταση του χρήστη όταν ξεκινάει μια νέα συνεδρία
@@ -400,7 +453,9 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     else:
         welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
 
-    mastery_profile = _compute_mastery_profile(user, db_history)
+    struggle_flags = _compute_lesson_struggle_flags(db_history)
+    cohort_pct = await _compute_cohort_completion_pct(db, TOTAL_LESSONS)
+    mastery_profile = _compute_mastery_profile(user, db_history, struggle_flags, cohort_pct)
 
     new_session_id = int(time.time())
     db.add(ChatHistory(
