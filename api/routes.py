@@ -281,6 +281,26 @@ async def get_db():
     finally:
         await session.close()
 
+def _compute_mastery_profile(user: User, db_history) -> list:
+    """Open Learner Model (Bull & Kay): mastery % ανά ενότητα — εμφανίζεται στο frontend.
+    0% αν δεν έχει γίνει ΚΑΜΙΑ υποβολή στο τρέχον μάθημα ακόμα — το "developing" είναι το
+    DB default για νέους λογαριασμούς, δεν σημαίνει ότι όντως δουλεύει στο επίπεδο εκείνο."""
+    current_mastery = (
+        UNDERSTANDING_LEVEL_TO_MASTERY_PCT.get(user.understanding_level or "developing", 50)
+        if _has_recent_attempts(db_history) else 0
+    )
+    mastery_profile = []
+    for lesson_obj in lessons_content.get("lessons", []):
+        lid = lesson_obj.get("id", 0)
+        if lid < user.current_lesson_id:
+            pct = 100
+        elif lid == user.current_lesson_id:
+            pct = current_mastery
+        else:
+            pct = 0
+        mastery_profile.append({"id": lid, "title": lesson_obj.get("title", ""), "mastery": pct})
+    return mastery_profile
+
 @router.post("/register") # Endpoint για την εγγραφή νέου χρήστη
 async def register(user_data: UserAuth, db: AsyncSession = Depends(get_db)): 
     query = await db.execute(select(User).filter(User.username == user_data.username))
@@ -303,6 +323,26 @@ async def login(user_data: UserAuth, db: AsyncSession = Depends(get_db)):
 
     return {"username": user.username, "id": user.id}
 
+@router.get("/session/{user_id}/progress")
+# Ελαφρύ endpoint ΧΩΡΙΣ side-effects (καμία εγγραφή ChatHistory, κανένα LLM call) — φτιάχτηκε
+# ειδικά ώστε η αρχική σελίδα να μπορεί να ανανεώνει mastery_profile/experience_level κάθε φορά
+# που εμφανίζεται, χωρίς να δημιουργεί κατά λάθος νέο "session" σαν το /welcome.
+async def session_progress(user_id: int, db: AsyncSession = Depends(get_db)):
+    user_result = await db.execute(select(User).filter(User.id == user_id))
+    user = user_result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+
+    history_query = await db.execute(
+        select(ChatHistory).filter(ChatHistory.user_id == user_id).order_by(ChatHistory.id.asc())
+    )
+    db_history = history_query.scalars().all()
+
+    return {
+        "experience_level": user.experience_level or "beginner",
+        "mastery_profile": _compute_mastery_profile(user, db_history),
+    }
+
 @router.get("/session/{user_id}/welcome") # Endpoint για να πάρει το μήνυμα καλωσορίσματος και την τρέχουσα κατάσταση του χρήστη όταν ξεκινάει μια νέα συνεδρία
 async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     user_result = await db.execute(select(User).filter(User.id == user_id))
@@ -320,7 +360,16 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
         lesson_name = _LESSON_TITLES_DISPLAY[idx]
 
         history_pairs = [(h.role, h.content) for h in db_history]
-        recap = await generate_session_recap_async(history_pairs, lesson_name, user.username)
+        # Timeout σύντομο (όχι τα 60s του /chat) — αυτό το call μπλοκάρει το ΦΟΡΤΩΜΑ της αρχικής
+        # σελίδας (μαζί με το mastery_profile, που δεν έχει καμία σχέση με LLM). Αν αργήσει το LLM,
+        # προτιμάμε γρήγορο deterministic welcome message παρά να χάσει ο χρήστης ΟΛΟ το response.
+        try:
+            recap = await asyncio.wait_for(
+                generate_session_recap_async(history_pairs, lesson_name, user.username),
+                timeout=8,
+            )
+        except Exception:
+            recap = ""
 
         if recap:
             welcome_message = f"Καλώς ήρθες ξανά, {user.username}!\n\n{recap}\n\nΘέλεις να συνεχίσουμε απευθείας ή να ξαναδούμε πρώτα τη θεωρία της ενότητας **{lesson_name}**;"
@@ -351,18 +400,7 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     else:
         welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
 
-    # Open Learner Model (Bull & Kay): mastery % ανά ενότητα — εμφανίζεται στο frontend
-    _current_mastery = UNDERSTANDING_LEVEL_TO_MASTERY_PCT.get(user.understanding_level or "developing", 50)
-    mastery_profile = []
-    for lesson_obj in lessons_content.get("lessons", []):
-        lid = lesson_obj.get("id", 0)
-        if lid < user.current_lesson_id:
-            pct = 100
-        elif lid == user.current_lesson_id:
-            pct = _current_mastery
-        else:
-            pct = 0
-        mastery_profile.append({"id": lid, "title": lesson_obj.get("title", ""), "mastery": pct})
+    mastery_profile = _compute_mastery_profile(user, db_history)
 
     new_session_id = int(time.time())
     db.add(ChatHistory(

@@ -86,7 +86,7 @@ export default function App() {
     return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
   };
 
-  const bootstrapSession = async (targetUser) => {
+  const bootstrapSession = async (targetUser, isRetry = false) => {
     if (!targetUser?.id) return;
     try {
       const res = await axios.get(`${API_BASE}/session/${targetUser.id}/welcome`);
@@ -95,6 +95,11 @@ export default function App() {
       if (res.data.experience_level) setExperienceLevel(res.data.experience_level);
       if (res.data.mastery_profile) setMasteryProfile(res.data.mastery_profile);
     } catch (err) {
+      // Μία επανάληψη πριν παραδοθούμε στο fallback μήνυμα — καλύπτει παροδικά network hiccups
+      // ώστε να μη χάνεται σιωπηλά ολόκληρο το welcome payload (μαζί με το mastery_profile).
+      if (!isRetry) {
+        return bootstrapSession(targetUser, true);
+      }
       setMessages([{ role: 'ai', content: `Γεια σου ${targetUser.username}! Πριν συνεχίσουμε, έχεις κάποια απορία;` }]);
     }
   };
@@ -128,6 +133,20 @@ export default function App() {
     if (user && currentView === 'mentor' && messages.length === 0) {
       bootstrapSession(user);
     }
+  }, [user, currentView]);
+
+  // Η "Η πρόοδός μου" ενότητα ζωντανεύει ξανά κάθε φορά που δείχνουμε την αρχική σελίδα —
+  // ανεξάρτητα από το αν έχει ανοίξει ποτέ η συζήτηση. Χωρίς αυτό, το mastery_profile έμενε
+  // παγωμένο στην τιμή της πρώτης φοράς που μπήκε στη συζήτηση (ή έλειπε εντελώς αν δεν είχε
+  // μπει ποτέ), ακόμα κι αν ο μαθητής μόλις είχε ολοκληρώσει μια ενότητα.
+  useEffect(() => {
+    if (!user || currentView !== 'landing') return;
+    axios.get(`${API_BASE}/session/${user.id}/progress`)
+      .then(res => {
+        if (res.data.experience_level) setExperienceLevel(res.data.experience_level);
+        if (res.data.mastery_profile) setMasteryProfile(res.data.mastery_profile);
+      })
+      .catch(() => { /* σιωπηλή αποτυχία — δεν χαλάει η υπόλοιπη σελίδα */ });
   }, [user, currentView]);
 
   // Wake-up ping: μόλις εμφανιστεί το login, στέλνουμε ένα GET στο backend
@@ -434,8 +453,10 @@ export default function App() {
           </button>
         </div>
 
-        {/* Main */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 20px' }}>
+        {/* Main — flex-start (ΟΧΙ center) ώστε το greeting+κάρτες να μένουν σε σταθερή θέση
+            ανεξάρτητα από το αν φόρτωσε ή όχι το mastery_profile· αλλιώς το centering μετατοπίζει
+            ΟΛΟ το block κάθε φορά που αλλάζει το συνολικό του ύψος. */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '64px 20px' }}>
           <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 2.2rem)', marginBottom: '8px', textAlign: 'center', fontWeight: 700 }}>
             {greeting}, {user.username}!
           </h1>
