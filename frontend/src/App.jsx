@@ -30,6 +30,7 @@ export default function App() {
 
   const [showEditor, setShowEditor] = useState(false);
   const [editorEnabled, setEditorEnabled] = useState(false);
+  const [taskJustCompleted, setTaskJustCompleted] = useState(false); // διαχωρίζει "δεν ξεκίνησε ακόμα" από "μόλις ολοκληρώθηκε"
   const [startTime, setStartTime] = useState(null);
   const [taskActive, setTaskActive] = useState(false);
   const [hintStage, setHintStage] = useState(0);        // 0=καμία υπόδειξη, 1/2/3=έχουν σταλεί
@@ -203,6 +204,7 @@ export default function App() {
     setCourseCompleted(false);
     setShowEditor(false);
     setEditorEnabled(false);
+    setTaskJustCompleted(false);
     setStartTime(null);
     setTaskActive(false);
     setHintStage(0);
@@ -219,6 +221,7 @@ export default function App() {
     const now = Date.now();
     setShowEditor(true);
     setEditorEnabled(true);
+    setTaskJustCompleted(false);
     setStartTime(now);
     setTaskActive(true);
     setHintStage(0);
@@ -344,6 +347,7 @@ export default function App() {
         setStartTime(null);
         setTaskActive(false);
         setEditorEnabled(false);
+        setTaskJustCompleted(true);
         setHintStage(0);
         setLastActivityTime(null);
       } else {
@@ -592,7 +596,7 @@ export default function App() {
         </div>
       )}
 
-      <div style={{ width: isMobile ? '100%' : (showEditor ? '40%' : '60%'), minWidth: isMobile ? '0' : (showEditor ? '280px' : 'auto'), margin: (isMobile || showEditor) ? '0' : '0 auto', transition: 'width 0.5s ease', display: 'flex', flexDirection: 'column', background: '#252526', borderRight: showEditor ? '2px solid #333' : 'none', flexShrink: 0 }}>
+      <div style={{ width: isMobile ? '100%' : '50%', minWidth: isMobile ? '0' : (showEditor ? '280px' : 'auto'), margin: (isMobile || showEditor) ? '0' : '0 auto', transition: 'width 0.5s ease', display: 'flex', flexDirection: 'column', background: '#252526', borderRight: showEditor ? '2px solid #333' : 'none', flexShrink: 0 }}>
         <div style={{ padding: '16px 20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
             <strong style={{ whiteSpace: 'nowrap' }}>Μέντορας Python</strong>
@@ -684,8 +688,8 @@ export default function App() {
               <Code2 size={18} color={editorEnabled ? '#007acc' : '#555'} />
               <span style={{ color: editorEnabled ? 'white' : '#666' }}>{getEditorFileName(user?.username)}</span>
               {!editorEnabled && (
-                <span style={{ fontSize: '0.75rem', color: '#888', background: '#333', padding: '2px 8px', borderRadius: '4px' }}>
-                  Η άσκηση δεν έχει ξεκινήσει ακόμα.
+                <span style={{ fontSize: '0.75rem', color: taskJustCompleted ? '#4caf50' : '#888', background: '#333', padding: '2px 8px', borderRadius: '4px' }}>
+                  {taskJustCompleted ? '✅ Η άσκηση ολοκληρώθηκε! Περίμενε την επόμενη.' : 'Η άσκηση δεν έχει ξεκινήσει ακόμα.'}
                 </span>
               )}
             </div>
@@ -734,8 +738,8 @@ export default function App() {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 pointerEvents: 'none',
               }}>
-                <span style={{ color: '#aaa', fontSize: '1rem', background: 'rgba(30,30,30,0.88)', padding: '12px 24px', borderRadius: '10px', border: '1px solid #3a3a3a' }}>
-                  Η άσκηση δεν έχει ξεκινήσει ακόμα.
+                <span style={{ color: taskJustCompleted ? '#4caf50' : '#aaa', fontSize: '1rem', background: 'rgba(30,30,30,0.88)', padding: '12px 24px', borderRadius: '10px', border: '1px solid #3a3a3a' }}>
+                  {taskJustCompleted ? '✅ Η άσκηση ολοκληρώθηκε! Περίμενε την επόμενη.' : 'Η άσκηση δεν έχει ξεκινήσει ακόμα.'}
                 </span>
               </div>
             )}
