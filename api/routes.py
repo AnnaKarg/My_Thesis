@@ -261,11 +261,11 @@ def _build_course_stats_message(user, total_lessons: int) -> str:
         )
         error_section = f"- **Συχνότερα λάθη που συναντήθηκαν:**\n{error_lines}"
     else:
-        error_section = "- **Λάθη:** Καμία επαναλαμβανόμενη δυσκολία εντοπίστηκε 🌟"
+        error_section = "- **Λάθη:** Καμία επαναλαμβανόμενη δυσκολία εντοπίστηκε"
 
     return (
-        f"🎉 **Συγχαρητήρια, {user.username}! Ολοκλήρωσες όλο το πρόγραμμα μαθημάτων Python!**\n\n"
-        f"**📊 Τα στατιστικά σου:**\n"
+        f"**Συγχαρητήρια, {user.username}! Ολοκλήρωσες όλο το πρόγραμμα μαθημάτων Python!**\n\n"
+        f"**Τα στατιστικά σου:**\n"
         f"- **Μαθήματα:** {total_lessons}/{total_lessons} ολοκληρωμένα\n"
         f"- **Ασκήσεις που λύθηκαν:** {solved}\n"
         f"- **Μέσος χρόνος ανά άσκηση:** {avg_time:.0f} δευτερόλεπτα\n"
@@ -540,9 +540,12 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
     # 1. Profile Check Logic (Beginner vs Expert) — LLM-based classification
     # ΠΡΟΣΟΧΗ: όχι len(db_history) == 0 — το /session/welcome εισάγει πάντα ένα welcome
     # μήνυμα ΠΡΙΝ το πρώτο πραγματικό μήνυμα του μαθητή, άρα db_history έχει ήδη 1 εγγραφή
-    # (το welcome, role="ai") όταν φτάνει το πρώτο chat request. Ελέγχουμε αν υπάρχει ΚΑΝΕΝΑ
-    # ανθρώπινο μήνυμα — αυτό είναι το πραγματικό "έχει μιλήσει ποτέ ο μαθητής;".
-    is_first_login = not any(h.role == "human" for h in db_history)
+    # (το welcome, role="ai") όταν φτάνει το πρώτο chat request. Χρησιμοποιούμε το
+    # user.profile_checked (πριν ενημερωθεί παρακάτω) αντί για "υπάρχει ανθρώπινο μήνυμα":
+    # αν η πρώτη απάντηση του μαθητή είναι ασαφής (π.χ. "ν"), το profile ΔΕΝ λύνεται αλλά
+    # ήδη υπάρχει ανθρώπινο μήνυμα στο ιστορικό — το "πρώτη φορά" πρέπει να παραμείνει True
+    # μέχρι να λυθεί πραγματικά το profile, αλλιώς χάνεται το προσαρμοσμένο καλωσόρισμα.
+    is_first_login = not user.profile_checked
     profile_soft_defaulted = False
     if not user.profile_checked:
         profile_result = await classify_profile_async(request.message)
@@ -750,7 +753,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
 
     except Exception:
         if effective_event_type == "no_submission_timeout":
-            ai_response = "Μην ανησυχείς αν δυσκολεύεσαι λίγο — αυτό είναι φυσιολογικό! Πάρε λίγο χρόνο και δοκίμασε να γράψεις έστω και μια γραμμή. 💡"
+            ai_response = "Μην ανησυχείς αν δυσκολεύεσαι λίγο — αυτό είναι φυσιολογικό! Πάρε λίγο χρόνο και δοκίμασε να γράψεις έστω και μια γραμμή."
         else:
             ai_response = "Ωχ, κάτι με δυσκόλεψε στη σύνδεση. Μπορείς να ξαναδοκιμάσεις;"
         raw_response = ai_response  # δεν υπάρχουν tokens να διατηρήσουμε στο error path

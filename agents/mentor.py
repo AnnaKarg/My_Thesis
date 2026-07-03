@@ -454,7 +454,7 @@ def _generate_hint_with_llm(
     ])
     if has_structural_error:
         # Deterministic για syntax/δομικά λάθη — αποφεύγει hallucinations
-        return _generate_targeted_hint(debug_report, difficulty, assessment_feedback)
+        return _generate_targeted_hint(debug_report, difficulty, assessment_feedback, hint_count)
 
     # LLM για assessment-level failures (grounded στην εκφώνηση + semantic analysis)
     clean_fb = _clean_feedback(assessment_feedback)
@@ -505,9 +505,9 @@ def _generate_hint_with_llm(
     try:
         result = llm.invoke(prompt_text)
         hint = _strip_thinking(result.content)
-        return hint if hint else _generate_targeted_hint(debug_report, difficulty, assessment_feedback)
+        return hint if hint else _generate_targeted_hint(debug_report, difficulty, assessment_feedback, hint_count)
     except Exception:
-        return _generate_targeted_hint(debug_report, difficulty, assessment_feedback)
+        return _generate_targeted_hint(debug_report, difficulty, assessment_feedback, hint_count)
 
 
 def _enforce_brief(text: str, max_sentences: int = 2) -> str:
@@ -785,7 +785,27 @@ async def classify_profile_async(user_input: str) -> str:
 
 # ── Deterministic helpers ────────────────────────────────────────────────────
 
-def _generate_targeted_hint(debug_report: str, difficulty: str, assessment_feedback: str = "") -> str:
+_HINT_ESCALATION_PREFIXES = [
+    "",
+    "Ας το ξαναδούμε λίγο πιο αναλυτικά. ",
+    "Βλέπω ότι αυτό το σημείο δυσκολεύει — πάμε πιο συγκεκριμένα. ",
+]
+_HINT_ESCALATION_SUFFIXES = [
+    "",
+    "",
+    " Αν χρειαστεί, γράψε μόνο τη μία γραμμή που λείπει και ξανάτρεξε τον κώδικα για να δεις τι αλλάζει.",
+]
+
+def _generate_targeted_hint(debug_report: str, difficulty: str, assessment_feedback: str = "", hint_count: int = 0) -> str:
+    """Wrapper γύρω από το _targeted_hint_text που εγγυάται ΟΤΙ το hint δεν επαναλαμβάνεται
+    λέξη-προς-λέξη όταν ο μαθητής ξαναδοκιμάζει το ίδιο (δομικό) λάθος — το ίδιο ακριβές
+    κείμενο σε επανάληψη δεν βοηθάει έναν μαθητή που είναι ήδη κολλημένος."""
+    base_hint = _targeted_hint_text(debug_report, difficulty, assessment_feedback)
+    tier = min(max(hint_count, 0), 2)
+    return f"{_HINT_ESCALATION_PREFIXES[tier]}{base_hint}{_HINT_ESCALATION_SUFFIXES[tier]}"
+
+
+def _targeted_hint_text(debug_report: str, difficulty: str, assessment_feedback: str = "") -> str:
     """Μετατρέπει το τεχνικό debug_report σε παιδαγωγικό hint για τον χρήστη.
     Δεν αποκαλύπτει ακριβώς το λάθος — δίνει κατεύθυνση για να το βρει ο μαθητής μόνος του."""
     report = debug_report or ""

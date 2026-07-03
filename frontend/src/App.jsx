@@ -309,7 +309,7 @@ export default function App() {
       });
       setMessages(prev => [...prev, { role: 'ai', content: res.data.mentor_response }]);
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'ai', content: "⚠️ Πρόβλημα σύνδεσης με το AI." }]);
+      setMessages(prev => [...prev, { role: 'ai', content: "Πρόβλημα σύνδεσης με το AI." }]);
     } finally { loadingRef.current = false; setLoading(false); }
   };
 
@@ -377,7 +377,7 @@ export default function App() {
         {registerSuccessModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
             <div style={{ background: '#1e1e1e', border: '1px solid #4caf50', borderRadius: '16px', padding: '40px 48px', textAlign: 'center', maxWidth: '420px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' }}>
-              <div style={{ fontSize: '3rem', marginBottom: '14px' }}>🎉</div>
+              <div style={{ fontSize: '3rem', marginBottom: '14px' }}></div>
               <h3 style={{ color: '#4caf50', marginBottom: '12px', fontSize: '1.3rem' }}>Η εγγραφή έγινε!</h3>
               <p style={{ color: '#ccc', fontSize: '1.05rem', marginBottom: '28px' }}>Ο λογαριασμός σου δημιουργήθηκε επιτυχώς. Μπορείς τώρα να συνδεθείς.</p>
               <button
@@ -433,7 +433,7 @@ export default function App() {
             disabled={authLoading}
             style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: authLoading ? '#388e3c' : '#4caf50', color: 'white', fontWeight: 'bold', cursor: authLoading ? 'wait' : 'pointer', fontSize: '1.1rem', transition: 'background 0.2s' }}
           >
-            {authLoading ? '⏳ Σύνδεση...' : (isRegistering ? 'Εγγραφή' : 'Είσοδος')}
+            {authLoading ? 'Σύνδεση...' : (isRegistering ? 'Εγγραφή' : 'Είσοδος')}
           </button>
           <p
             onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); setShowPassword(false); }}
@@ -520,7 +520,7 @@ export default function App() {
               onMouseEnter={e => { e.currentTarget.style.borderColor = '#4caf50'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = '#333'; e.currentTarget.style.transform = 'translateY(0)'; }}
             >
-              📊 Η πρόοδός μου
+              Η πρόοδός μου
             </button>
           )}
         </div>
@@ -532,7 +532,7 @@ export default function App() {
             <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '560px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}
               onClick={e => e.stopPropagation()}>
               <div style={{ padding: '16px 20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-                <strong style={{ color: '#aaa', fontSize: '0.95rem' }}>📊 Η πρόοδός μου</strong>
+                <strong style={{ color: '#aaa', fontSize: '0.95rem' }}>Η πρόοδός μου</strong>
                 <button onClick={() => setShowProgressModal(false)} style={{ background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: '1.3rem', lineHeight: 1 }}>✕</button>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: '40px 24px 24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -615,7 +615,7 @@ export default function App() {
           <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '680px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ padding: '16px 20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <strong style={{ color: '#aaa', fontSize: '0.95rem' }}>📚 Συνομιλία — {historyModal.title}</strong>
+              <strong style={{ color: '#aaa', fontSize: '0.95rem' }}>Συνομιλία — {historyModal.title}</strong>
               <button onClick={() => setHistoryModal(null)} style={{ background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: '1.3rem', lineHeight: 1 }}>✕</button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -669,7 +669,7 @@ export default function App() {
                 onClick={() => { setCourseCompleted(false); setMessages([]); setCurrentView('landing'); }}
                 style={{ background: '#4caf50', border: 'none', borderRadius: '8px', color: 'white', padding: '6px 14px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}
               >
-                🏠 Αρχική
+                Αρχική
               </button>
             )}
           </div>
@@ -684,7 +684,7 @@ export default function App() {
                   }}
                   style={{ background: showHistorySidebar ? '#3a3a3a' : 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#aaa', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
                 >
-                  📚 Ιστορικό
+                  Ιστορικό
                 </button>
                 <button
                   onClick={() => setCurrentView('landing')}
@@ -715,12 +715,12 @@ export default function App() {
                       onClick={handleStartTask}
                       style={{ marginTop: '15px', padding: '10px 20px', background: '#4caf50', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem' }}
                     >
-                      🚀 Πάτα εδώ για να ξεκινήσεις την άσκηση!
+                      Πάτα εδώ για να ξεκινήσεις την άσκηση!
                     </button>
                   )}
                   {hasStartButtonToken(m.content) && i === lastStartIdx && editorEnabled && (
                     <span style={{ marginTop: '12px', display: 'inline-block', color: '#4caf50', fontSize: '0.85rem', fontStyle: 'italic' }}>
-                      ✅ Η άσκηση ξεκίνησε — γράφε στον editor!
+                      Η άσκηση ξεκίνησε — γράφε στον editor!
                     </span>
                   )}
                 </div>
@@ -753,7 +753,7 @@ export default function App() {
               <span style={{ color: editorEnabled ? 'white' : '#666' }}>{getEditorFileName(user?.username)}</span>
               {!editorEnabled && (
                 <span style={{ fontSize: '0.75rem', color: taskJustCompleted ? '#4caf50' : '#888', background: '#333', padding: '2px 8px', borderRadius: '4px' }}>
-                  {taskJustCompleted ? '✅ Η άσκηση ολοκληρώθηκε! Περίμενε την επόμενη.' : 'Η άσκηση δεν έχει ξεκινήσει ακόμα.'}
+                  {taskJustCompleted ? 'Η άσκηση ολοκληρώθηκε! Περίμενε την επόμενη.' : 'Η άσκηση δεν έχει ξεκινήσει ακόμα.'}
                 </span>
               )}
             </div>
@@ -803,7 +803,7 @@ export default function App() {
                 pointerEvents: 'none',
               }}>
                 <span style={{ color: taskJustCompleted ? '#4caf50' : '#aaa', fontSize: '1rem', background: 'rgba(30,30,30,0.88)', padding: '12px 24px', borderRadius: '10px', border: '1px solid #3a3a3a' }}>
-                  {taskJustCompleted ? '✅ Η άσκηση ολοκληρώθηκε! Περίμενε την επόμενη.' : 'Η άσκηση δεν έχει ξεκινήσει ακόμα.'}
+                  {taskJustCompleted ? 'Η άσκηση ολοκληρώθηκε! Περίμενε την επόμενη.' : 'Η άσκηση δεν έχει ξεκινήσει ακόμα.'}
                 </span>
               </div>
             )}
