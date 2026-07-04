@@ -25,6 +25,17 @@ class User(Base): # Ορίζουμε το μοντέλο User που αντιπ�
     # πόσο direct/indirect είναι οι υποδείξεις (0.0 = κανένα hint ακόμα)
     avg_hints_per_task = Column(Float, default=0.0)
 
+    # ── Button 2: Εξάσκηση (ελεύθερη πρακτική, ξεχωριστό από την κύρια ροή μαθημάτων) ──
+    # Τρέχον σερί σωστών στη σειρά (σε ΟΠΟΙΟΔΗΠΟΤΕ επιλεγμένο κεφάλαιο) — μηδενίζεται σε λάθος,
+    # τροφοδοτεί ΚΑΙ τον προσωπικό στόχο ΚΑΙ την adaptive δυσκολία (streak >= 3 → hard).
+    practice_streak_current = Column(Integer, default=0)
+    # Προσωπικός στόχος του μαθητή (πόσα σωστά στη σειρά θέλει να πετύχει). 0 = δεν έχει οριστεί.
+    practice_streak_goal = Column(Integer, default=0)
+    # JSON dict {lesson_id: consecutive_correct} — ΞΕΧΩΡΙΣΤΟ από το practice_streak_current
+    # (εκείνο είναι ενιαίο σε όλα τα επιλεγμένα κεφάλαια, αυτό είναι ανά κεφάλαιο) — όταν ένα
+    # κεφάλαιο φτάσει το threshold, σβήνει το struggled flag του στο Open Learner Model.
+    practice_lesson_correct_streak = Column(Text, default="{}")
+
 class ChatHistory(Base): # Ορίζουμε το μοντέλο ChatHistory που αντιπροσωπεύει το ιστορικό συνομιλιών των χρηστών με τον Mentor
     __tablename__ = "chat_histories"
     id = Column(Integer, primary_key=True, index=True)

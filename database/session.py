@@ -54,6 +54,9 @@ async def init_db():
                 ("pending_advance",           "BOOLEAN NOT NULL DEFAULT 0"),
                 ("difficulty_probe_direction","VARCHAR NOT NULL DEFAULT ''"),
                 ("avg_hints_per_task",        "FLOAT NOT NULL DEFAULT 0.0"),
+                ("practice_streak_current",       "INTEGER NOT NULL DEFAULT 0"),
+                ("practice_streak_goal",          "INTEGER NOT NULL DEFAULT 0"),
+                ("practice_lesson_correct_streak", "TEXT NOT NULL DEFAULT '{}'"),
             ]
             for col_name, col_def in extra_columns:
                 if col_name not in columns:

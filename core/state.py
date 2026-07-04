@@ -41,3 +41,6 @@ class AgentState(TypedDict): # Ορισμός της δομής του state τ�
 
     free_check_mode: bool  # True → Button 3 (ελεύθερος έλεγχος κώδικα): debugger τρέχει, assessor παρακάμπτεται
     free_check_description: str  # η δική του περιγραφή πρόθεσης του μαθητή, αντί για current_task/success_criteria
+
+    practice_mode: bool  # True → Button 2 (εξάσκηση): debugger->assessor->mentor τρέχουν κανονικά,
+                          # αλλά ο mentor απαντάει με πρακτική-mode μήνυμα (streak) αντί για curriculum flow

@@ -23,6 +23,8 @@ export default function App() {
   const [showProgressModal, setShowProgressModal] = useState(false);
   const [showLeaveTaskConfirm, setShowLeaveTaskConfirm] = useState(false);
   const [pendingFreshTaskOnReturn, setPendingFreshTaskOnReturn] = useState(false);
+  const [showLeaveFreeCheckConfirm, setShowLeaveFreeCheckConfirm] = useState(false);
+  const [showLeavePracticeConfirm, setShowLeavePracticeConfirm] = useState(false);
   // Button 3 — ελεύθερος έλεγχος κώδικα (χωρίς βαθμολόγηση, ξεχωριστό από τη ροή μαθημάτων)
   const [freeCheckCode, setFreeCheckCode] = useState('');
   const [freeCheckDescription, setFreeCheckDescription] = useState('');
@@ -30,6 +32,17 @@ export default function App() {
   const [freeCheckLoading, setFreeCheckLoading] = useState(false);
   const [freeCheckError, setFreeCheckError] = useState('');
   const FREE_CHECK_MAX_CHARS = 2000;
+  // Button 2 — Εξάσκηση (πραγματική βαθμολόγηση, ξεχωριστό από τη σειριακή ροή μαθημάτων)
+  const [practiceSelectedLessonIds, setPracticeSelectedLessonIds] = useState([]);
+  const [practiceCurrentTask, setPracticeCurrentTask] = useState(null); // {task, success_criteria, lesson_id, lesson_title, difficulty}
+  const [practiceCode, setPracticeCode] = useState('');
+  const [practiceResponse, setPracticeResponse] = useState(null);
+  const [practiceIsCorrect, setPracticeIsCorrect] = useState(null);
+  const [practiceLoading, setPracticeLoading] = useState(false);
+  const [practiceError, setPracticeError] = useState('');
+  const [practiceStreakCurrent, setPracticeStreakCurrent] = useState(0);
+  const [practiceStreakGoal, setPracticeStreakGoal] = useState(0);
+  const [practiceGoalInput, setPracticeGoalInput] = useState('');
   // Custom tooltip (portal-based, ΟΧΙ position:absolute μέσα στο modal) — το native title ήταν
   // αναξιόπιστο/αργό, και το πρώτο absolute-positioned πείραμα έκοβε πάνω/πλάγια από το modal
   // overflow. Με portal στο document.body + fixed coordinates, ΔΕΝ κόβεται ποτέ από κανένα container.
@@ -167,11 +180,13 @@ export default function App() {
   // παγωμένο στην τιμή της πρώτης φοράς που μπήκε στη συζήτηση (ή έλειπε εντελώς αν δεν είχε
   // μπει ποτέ), ακόμα κι αν ο μαθητής μόλις είχε ολοκληρώσει μια ενότητα.
   useEffect(() => {
-    if (!user || currentView !== 'landing') return;
+    if (!user || (currentView !== 'landing' && currentView !== 'practice')) return;
     axios.get(`${API_BASE}/session/${user.id}/progress`)
       .then(res => {
         if (res.data.experience_level) setExperienceLevel(res.data.experience_level);
         if (res.data.mastery_profile) setMasteryProfile(res.data.mastery_profile);
+        if (typeof res.data.practice_streak_current === 'number') setPracticeStreakCurrent(res.data.practice_streak_current);
+        if (typeof res.data.practice_streak_goal === 'number') setPracticeStreakGoal(res.data.practice_streak_goal);
       })
       .catch(() => { /* σιωπηλή αποτυχία — δεν χαλάει η υπόλοιπη σελίδα */ });
   }, [user, currentView]);
@@ -267,6 +282,110 @@ export default function App() {
     } finally {
       setFreeCheckLoading(false);
     }
+  };
+
+  const handleGoHomeFromFreeCheck = () => {
+    if (freeCheckCode.trim()) {
+      setShowLeaveFreeCheckConfirm(true);
+      return;
+    }
+    setCurrentView('landing');
+  };
+
+  const handleConfirmLeaveFreeCheck = () => {
+    setShowLeaveFreeCheckConfirm(false);
+    setFreeCheckCode('');
+    setFreeCheckDescription('');
+    setFreeCheckResponse(null);
+    setFreeCheckError('');
+    setCurrentView('landing');
+  };
+
+  const handleEnterPractice = () => {
+    setPracticeSelectedLessonIds([]);
+    setPracticeCurrentTask(null);
+    setPracticeCode('');
+    setPracticeResponse(null);
+    setPracticeIsCorrect(null);
+    setPracticeError('');
+    setPracticeGoalInput('');
+    setCurrentView('practice');
+  };
+
+  const handleTogglePracticeLesson = (lessonId) => {
+    setPracticeSelectedLessonIds(prev =>
+      prev.includes(lessonId) ? prev.filter(id => id !== lessonId) : [...prev, lessonId]
+    );
+  };
+
+  const handleFetchPracticeTask = async () => {
+    if (!user?.id || practiceSelectedLessonIds.length === 0 || practiceLoading) return;
+    setPracticeLoading(true);
+    setPracticeError('');
+    setPracticeResponse(null);
+    setPracticeIsCorrect(null);
+    setPracticeCode('');
+    try {
+      const res = await axios.post(`${API_BASE}/practice/${user.id}/next_task`, {
+        lesson_ids: practiceSelectedLessonIds,
+      });
+      setPracticeCurrentTask(res.data);
+    } catch (err) {
+      setPracticeError(err.response?.data?.detail || 'Δεν βρέθηκε άσκηση. Δοκίμασε ξανά.');
+      setPracticeCurrentTask(null);
+    } finally {
+      setPracticeLoading(false);
+    }
+  };
+
+  const handlePracticeSubmit = async () => {
+    if (!user?.id || !practiceCode.trim() || !practiceCurrentTask || practiceLoading) return;
+    setPracticeLoading(true);
+    setPracticeError('');
+    try {
+      const res = await axios.post(`${API_BASE}/practice/${user.id}/submit`, {
+        code: practiceCode,
+        task: practiceCurrentTask.task,
+        success_criteria: practiceCurrentTask.success_criteria,
+        lesson_id: practiceCurrentTask.lesson_id,
+      });
+      setPracticeResponse(res.data.mentor_response);
+      setPracticeIsCorrect(res.data.is_correct);
+      setPracticeStreakCurrent(res.data.practice_streak_current);
+      setPracticeStreakGoal(res.data.practice_streak_goal);
+    } catch (err) {
+      setPracticeError(err.response?.data?.detail || 'Κάτι πήγε στραβά κατά τον έλεγχο. Δοκίμασε ξανά.');
+    } finally {
+      setPracticeLoading(false);
+    }
+  };
+
+  const handleSetPracticeGoal = async () => {
+    const goal = parseInt(practiceGoalInput, 10);
+    if (!user?.id || isNaN(goal) || goal < 0) return;
+    try {
+      const res = await axios.post(`${API_BASE}/practice/${user.id}/set_goal`, { goal });
+      setPracticeStreakGoal(res.data.practice_streak_goal);
+      setPracticeGoalInput('');
+    } catch (err) { /* ignore */ }
+  };
+
+  const handleGoHomeFromPractice = () => {
+    if (practiceCurrentTask) {
+      setShowLeavePracticeConfirm(true);
+      return;
+    }
+    setCurrentView('landing');
+  };
+
+  const handleConfirmLeavePractice = () => {
+    setShowLeavePracticeConfirm(false);
+    setPracticeCurrentTask(null);
+    setPracticeCode('');
+    setPracticeResponse(null);
+    setPracticeIsCorrect(null);
+    setPracticeError('');
+    setCurrentView('landing');
   };
 
   const handleGoHomeClick = () => {
@@ -590,14 +709,18 @@ export default function App() {
               </p>
             </div>
 
-            {/* Κάρτα 2: Εξάσκηση — σύντομα */}
-            <div style={{ background: '#161616', border: '2px solid #2a2a2a', borderRadius: '20px', padding: '36px 24px', width: '240px', textAlign: 'center', opacity: 0.55, boxSizing: 'border-box', cursor: 'not-allowed' }}>
-              <Zap size={52} color="#444" style={{ marginBottom: '18px' }} />
-              <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem', color: '#555' }}>Εξάσκηση</h3>
-              <p style={{ color: '#444', fontSize: '0.88rem', margin: '0 0 16px', lineHeight: '1.55' }}>
+            {/* Κάρτα 2: Εξάσκηση — Button 2, ελεύθερη πρακτική με streak */}
+            <div
+              onClick={handleEnterPractice}
+              style={{ background: '#1e1e1e', border: '2px solid #4caf50', borderRadius: '20px', padding: '36px 24px', width: '240px', cursor: 'pointer', textAlign: 'center', boxShadow: '0 4px 20px rgba(76,175,80,0.12)', transition: 'transform 0.15s, box-shadow 0.15s', boxSizing: 'border-box' }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-5px)'; e.currentTarget.style.boxShadow = '0 10px 32px rgba(76,175,80,0.28)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(76,175,80,0.12)'; }}
+            >
+              <Zap size={52} color="#4caf50" style={{ marginBottom: '18px' }} />
+              <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem' }}>Εξάσκηση</h3>
+              <p style={{ color: '#888', fontSize: '0.88rem', margin: 0, lineHeight: '1.55' }}>
                 Προσαρμοστικές ασκήσεις βάσει των αναγκών σου
               </p>
-              <span style={{ fontSize: '0.78rem', background: '#222', color: '#555', padding: '4px 12px', borderRadius: '20px' }}>Σύντομα...</span>
             </div>
 
             {/* Κάρτα 3: Αξιολόγηση κώδικα — Button 3, ελεύθερος έλεγχος κώδικα */}
@@ -717,8 +840,8 @@ export default function App() {
             <FileCode size={22} color="#4caf50" />
             <strong style={{ fontSize: '1.05rem' }}>Αξιολόγηση Κώδικα</strong>
           </div>
-          <button onClick={() => setCurrentView('landing')} style={{ background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: '0.9rem' }}>
-            ← Αρχική
+          <button onClick={handleGoHomeFromFreeCheck} style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#888', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+            Αρχική
           </button>
         </div>
 
@@ -782,6 +905,214 @@ export default function App() {
             )}
           </div>
         </div>
+
+        {showLeaveFreeCheckConfirm && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+            onClick={() => setShowLeaveFreeCheckConfirm(false)}>
+            <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '420px', border: '1px solid #3a3a3a', padding: '24px' }}
+              onClick={e => e.stopPropagation()}>
+              <strong style={{ color: '#eee', fontSize: '1rem', display: 'block', marginBottom: '10px' }}>Έχεις κώδικα σε εξέλιξη</strong>
+              <p style={{ color: '#aaa', fontSize: '0.9rem', lineHeight: '1.5', margin: '0 0 22px' }}>
+                Αν πας στην αρχική σελίδα, ο κώδικας που έγραψες θα χαθεί. Θέλεις να συνεχίσεις;
+              </p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => setShowLeaveFreeCheckConfirm(false)}
+                  style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#ccc', cursor: 'pointer', padding: '8px 16px', fontSize: '0.88rem' }}
+                >
+                  Παραμονή εδώ
+                </button>
+                <button
+                  onClick={handleConfirmLeaveFreeCheck}
+                  style={{ background: '#c0392b', border: 'none', borderRadius: '8px', color: 'white', cursor: 'pointer', padding: '8px 16px', fontSize: '0.88rem', fontWeight: 600 }}
+                >
+                  Ναι, πήγαινε στην αρχική
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (currentView === 'practice') {
+    const completedLessons = masteryProfile.filter(l => l.mastery === 100);
+    const goalReached = practiceStreakGoal > 0 && practiceStreakCurrent >= practiceStreakGoal;
+
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'sans-serif' }}>
+        <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2a2a2a', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Zap size={22} color="#4caf50" />
+            <strong style={{ fontSize: '1.05rem' }}>Εξάσκηση</strong>
+          </div>
+          <button onClick={handleGoHomeFromPractice} style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#888', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+            Αρχική
+          </button>
+        </div>
+
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          {/* Sidebar: πολλαπλή επιλογή ολοκληρωμένων κεφαλαίων */}
+          <div style={{ width: '220px', flexShrink: 0, borderRight: '1px solid #2a2a2a', padding: '20px 14px', overflowY: 'auto' }}>
+            <div style={{ color: '#888', fontSize: '0.8rem', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Κεφάλαια</div>
+            {completedLessons.length === 0 && (
+              <p style={{ color: '#666', fontSize: '0.85rem', lineHeight: '1.5' }}>
+                Ολοκλήρωσε τουλάχιστον ένα κεφάλαιο στα Μαθήματα για να ξεκλειδώσεις εξάσκηση εδώ.
+              </p>
+            )}
+            {completedLessons.map(l => {
+              const active = practiceSelectedLessonIds.includes(l.id);
+              return (
+                <button
+                  key={l.id}
+                  onClick={() => handleTogglePracticeLesson(l.id)}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left', marginBottom: '8px',
+                    padding: '10px 12px', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem',
+                    border: active ? '2px solid #4caf50' : '2px solid #2a2a2a',
+                    background: active ? 'rgba(76,175,80,0.12)' : '#1a1a1a',
+                    color: active ? '#eee' : '#aaa',
+                  }}
+                >
+                  {l.title}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Main */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{ width: '100%', maxWidth: '680px' }}>
+
+              {/* Streak */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#1e1e1e', border: '1px solid #333', borderRadius: '12px', padding: '14px 18px', marginBottom: '20px' }}>
+                <div>
+                  <span style={{ fontSize: '1.1rem', fontWeight: 700, color: goalReached ? '#4caf50' : '#eee' }}>
+                    Σερί: {practiceStreakCurrent}{practiceStreakGoal > 0 ? ` / ${practiceStreakGoal}` : ''}
+                  </span>
+                  {goalReached && <span style={{ marginLeft: '10px', color: '#4caf50', fontSize: '0.85rem' }}>Πέτυχες τον στόχο σου!</span>}
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    type="number"
+                    min="0"
+                    value={practiceGoalInput}
+                    onChange={e => setPracticeGoalInput(e.target.value)}
+                    placeholder="Στόχος"
+                    style={{ width: '70px', background: '#161616', border: '1px solid #333', borderRadius: '8px', color: 'white', padding: '7px 8px', fontSize: '0.85rem' }}
+                  />
+                  <button onClick={handleSetPracticeGoal} style={{ background: '#2a2a2a', border: 'none', borderRadius: '8px', color: '#ccc', padding: '7px 12px', fontSize: '0.8rem', cursor: 'pointer' }}>
+                    Ορισμός
+                  </button>
+                </div>
+              </div>
+
+              {!practiceCurrentTask && (
+                <button
+                  onClick={handleFetchPracticeTask}
+                  disabled={practiceSelectedLessonIds.length === 0 || practiceLoading}
+                  style={{
+                    width: '100%', padding: '13px', borderRadius: '10px', border: 'none', fontWeight: 700, fontSize: '0.95rem',
+                    cursor: (practiceSelectedLessonIds.length === 0 || practiceLoading) ? 'not-allowed' : 'pointer',
+                    background: (practiceSelectedLessonIds.length === 0 || practiceLoading) ? '#2a2a2a' : '#4caf50',
+                    color: (practiceSelectedLessonIds.length === 0 || practiceLoading) ? '#666' : '#0d1f0f',
+                  }}
+                >
+                  {practiceLoading ? 'Φόρτωση...' : 'Επόμενη άσκηση'}
+                </button>
+              )}
+
+              {practiceCurrentTask && (
+                <>
+                  <div style={{ background: '#1e1e1e', border: '1px solid #333', borderRadius: '10px', padding: '16px 18px', marginBottom: '16px', fontSize: '0.92rem', lineHeight: '1.6' }}>
+                    <div style={{ color: '#888', fontSize: '0.78rem', marginBottom: '6px' }}>
+                      {practiceCurrentTask.lesson_title} · {practiceCurrentTask.difficulty === 'hard' ? 'Δύσκολο' : 'Εύκολο'}
+                    </div>
+                    {practiceCurrentTask.task}
+                  </div>
+
+                  <div style={{ border: '1px solid #333', borderRadius: '10px', overflow: 'hidden', height: '220px', marginBottom: '14px' }}>
+                    <Editor
+                      height="100%"
+                      theme="vs-dark"
+                      defaultLanguage="python"
+                      value={practiceCode}
+                      onChange={(value) => setPracticeCode(value ?? '')}
+                      options={{ fontSize: 15, quickSuggestions: false, suggestOnTriggerCharacters: false, acceptSuggestionOnEnter: 'off' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      onClick={handlePracticeSubmit}
+                      disabled={!practiceCode.trim() || practiceLoading}
+                      style={{
+                        flex: 1, padding: '13px', borderRadius: '10px', border: 'none', fontWeight: 700, fontSize: '0.95rem',
+                        cursor: (!practiceCode.trim() || practiceLoading) ? 'not-allowed' : 'pointer',
+                        background: (!practiceCode.trim() || practiceLoading) ? '#2a2a2a' : '#4caf50',
+                        color: (!practiceCode.trim() || practiceLoading) ? '#666' : '#0d1f0f',
+                      }}
+                    >
+                      {practiceLoading ? 'Έλεγχος...' : 'Έλεγχος'}
+                    </button>
+                    <button
+                      onClick={handleFetchPracticeTask}
+                      disabled={practiceLoading}
+                      style={{ padding: '13px 18px', borderRadius: '10px', border: '1px solid #333', background: 'transparent', color: '#ccc', fontSize: '0.9rem', cursor: practiceLoading ? 'not-allowed' : 'pointer' }}
+                    >
+                      Νέα άσκηση
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {practiceError && (
+                <div style={{ marginTop: '16px', background: '#2a1616', border: '1px solid #5c2b2b', borderRadius: '10px', padding: '14px 16px', color: '#ef9a9a', fontSize: '0.9rem' }}>
+                  {practiceError}
+                </div>
+              )}
+
+              {practiceResponse && (
+                <div style={{
+                  marginTop: '16px', borderRadius: '10px', padding: '16px 18px', fontSize: '0.92rem', lineHeight: '1.6', whiteSpace: 'pre-wrap',
+                  background: practiceIsCorrect ? 'rgba(76,175,80,0.1)' : '#1e1e1e',
+                  border: practiceIsCorrect ? '1px solid #4caf50' : '1px solid #333',
+                  color: '#ddd',
+                }}>
+                  {practiceResponse}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {showLeavePracticeConfirm && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+            onClick={() => setShowLeavePracticeConfirm(false)}>
+            <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '420px', border: '1px solid #3a3a3a', padding: '24px' }}
+              onClick={e => e.stopPropagation()}>
+              <strong style={{ color: '#eee', fontSize: '1rem', display: 'block', marginBottom: '10px' }}>Έχεις ενεργή άσκηση</strong>
+              <p style={{ color: '#aaa', fontSize: '0.9rem', lineHeight: '1.5', margin: '0 0 22px' }}>
+                Αν πας στην αρχική σελίδα, η άσκηση θα σταματήσει και θα πρέπει να πάρεις νέα. Θέλεις να συνεχίσεις;
+              </p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => setShowLeavePracticeConfirm(false)}
+                  style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#ccc', cursor: 'pointer', padding: '8px 16px', fontSize: '0.88rem' }}
+                >
+                  Παραμονή στην άσκηση
+                </button>
+                <button
+                  onClick={handleConfirmLeavePractice}
+                  style={{ background: '#c0392b', border: 'none', borderRadius: '8px', color: 'white', cursor: 'pointer', padding: '8px 16px', fontSize: '0.88rem', fontWeight: 600 }}
+                >
+                  Ναι, πήγαινε στην αρχική
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

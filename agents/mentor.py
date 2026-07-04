@@ -172,6 +172,13 @@ def _is_question_message(text: str) -> bool:
     ]
     return any(marker in normalized for marker in question_markers)
 
+def _ascii_visual_already_shown(messages, lesson_id) -> bool:
+    """True αν το ascii_visual αυτού του κεφαλαίου έχει ήδη εμφανιστεί στη συζήτηση — αποτρέπει
+    να ξαναδείχνεται το ίδιο διάγραμμα σε κάθε επόμενη απορία θεωρίας (κουράζει, δεν βοηθάει,
+    ίδια λογική με το hint-escalation που δεν επαναλαμβάνει το ίδιο hint)."""
+    tag = f"[ASCII_SHOWN:{lesson_id}]"
+    return any(tag in (getattr(msg, "content", "") or "") for msg in messages)
+
 def _task_already_presented(messages) -> bool:
     """True αν ο μαθητής έχει ήδη λάβει την τρέχουσα άσκηση.
     Σταματά στο [ASSESSMENT:REPEAT] ή [ASSESSMENT:ADVANCE] — και οι δύο σηματοδοτούν
@@ -374,20 +381,28 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
         return "other"
 
 
-def _answer_theory_question(user_input: str, lesson_title: str, theory: str, tone: str, current_lesson_id: int = 1) -> str:
+def _answer_theory_question(user_input: str, lesson_title: str, theory: str, tone: str, current_lesson_id: int = 1, ascii_already_shown: bool = False) -> str:
     """Απαντά σε θεωρητική απορία βάσει ΟΛΗΣ της θεωρίας που έχει διδαχθεί μέχρι τώρα.
     Αν η ερώτηση αφορά μελλοντική ενότητα, λέει 'θα το δούμε σύντομα'.
+
+    Αν η ΤΡΕΧΟΥΣΑ ενότητα έχει οπτικό διάγραμμα (ascii_visual) ΚΑΙ δεν έχει ήδη εμφανιστεί σε αυτή
+    τη συζήτηση (ascii_already_shown), προστίθεται αυτούσιο (deterministic, ΟΧΙ μέσω LLM) μετά την
+    εξήγηση — έτσι η ευθυγράμμιση των χαρακτήρων μένει πάντα σωστή. Εμφανίζεται ΜΟΝΟ μία φορά ανά
+    κεφάλαιο — η επανάληψη του ίδιου διαγράμματος σε κάθε απορία κουράζει χωρίς να βοηθάει παραπάνω.
     """
     # Χτίζουμε γνωστική βάση από όλες τις ενότητες που έχουν διδαχθεί
     all_lessons = lessons_content.get("lessons", [])
     covered_parts = []
     future_titles = []
+    ascii_visual = ""
     for l in all_lessons:
         t_raw = l.get("detailed_theory", "")
         t = t_raw.get("easy", "") if isinstance(t_raw, dict) else (t_raw or "")
         if l["id"] <= current_lesson_id:
             if t:
                 covered_parts.append(f"Ενότητα {l['id']} - {l.get('title', '')}:\n{t}")
+            if l["id"] == current_lesson_id:
+                ascii_visual = l.get("ascii_visual", "")
         else:
             future_titles.append(l.get("title", ""))
 
@@ -415,13 +430,18 @@ def _answer_theory_question(user_input: str, lesson_title: str, theory: str, ton
         f'- Κλείσε με μία σύντομη ερώτηση — εναλλάσσοντας κάθε φορά ανάμεσα σε: "Έγινε πιο ξεκάθαρο;", "Έχεις κι άλλη απορία;", "Βγαίνει νόημα;", "Τι άλλο σε μπερδεύει;". ΜΗΝ χρησιμοποιείς πάντα την ίδια φράση.\n\n'
         f'Ερώτηση μαθητή: {user_input}\n\nΑπάντηση:'
     )
+    visual_part = (
+        f"\n\n```\n{ascii_visual}\n```\n[ASCII_SHOWN:{current_lesson_id}]"
+        if ascii_visual and not ascii_already_shown else ""
+    )
     try:
         result = llm.invoke(prompt_text)
-        return _strip_thinking(result.content)
+        return _strip_thinking(result.content) + visual_part
     except Exception:
         return (
             f"Καλή ερώτηση! Ας ξαναδούμε τη θεωρία:\n\n{theory}\n\n"
             "Αν κάτι εξακολουθεί να είναι ασαφές, ρώτα πιο συγκεκριμένα!"
+            + visual_part
         )
 
 
@@ -648,7 +668,10 @@ def _generate_mentor_intro_outro(
             return _enforce_brief(match.group(1).strip()), _enforce_brief(match.group(2).strip())
         return _enforce_brief(cleaned), ""
     except Exception:
-        return "", ""
+        # Γνήσια αποτυχία LLM call (timeout/rate-limit/δίκτυο) — ΟΧΙ απλά κενό αποτέλεσμα σε
+        # κενές συμβολοσειρές: το περιεχόμενο ανάμεσα (θεωρία) θα εμφανιζόταν εντελώς χωρίς
+        # εισαγωγή/κλείσιμο, σαν να μην απάντησε καθόλου ο mentor γύρω από αυτό.
+        return "Ας δούμε:", "Έχεις κάποια απορία;"
 
 async def generate_session_recap_async(history_pairs: list, lesson_name: str, username: str) -> str:
     """Παράγει σύντομη περίληψη της προηγούμενης συνεδρίας με LLM, με δικά του λόγια."""
@@ -1142,6 +1165,30 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
         )
         return {"messages": [AIMessage(content=response)]}
 
+    # Button 2 (εξάσκηση) — debugger->assessor ΤΡΕΧΟΥΝ κανονικά (σε αντίθεση με το Button 3),
+    # γιατί το streak/adaptive difficulty χρειάζονται πραγματική αξιολόγηση is_correct. Ο mentor
+    # όμως παρακάμπτει όλη την curriculum λογική (θεωρία, advance, [BUTTON:START_TASK] κλπ) — το
+    # streak/goal εμφανίζονται στο frontend ως ξεχωριστό UI στοιχείο, ΟΧΙ μέσα στο μήνυμα, ώστε
+    # να μην κινδυνεύει ο αριθμός να αναφερθεί λάθος από το LLM.
+    if state.get("practice_mode"):
+        if state.get("is_correct", False):
+            response = _generate_mentor_response(
+                context="Ο μαθητής μόλις έλυσε σωστά μια άσκηση εξάσκησης (ελεύθερη πρακτική, δεν επηρεάζει την πρόοδο στα μαθήματα).",
+                indicative="π.χ. 'Μπράβο, σωστό!' ή 'Ωραία δουλειά, συνέχισε έτσι!'",
+                tone="ενθαρρυντικά, ζωηρά",
+                brief=True,
+                must_not="αναφέρεις αριθμούς σερί ή στόχου — αυτά εμφανίζονται ήδη στην οθόνη, όχι στο μήνυμά σου"
+            ) or "Σωστό! Μπράβο."
+        else:
+            response = _generate_hint_with_llm(
+                state.get("debug_report", ""),
+                state.get("current_task", ""),
+                "easy",
+                state.get("understanding_level", "developing"),
+                state.get("assessment_feedback", ""),
+            )
+        return {"messages": [AIMessage(content=response)]}
+
     is_first_login = state.get("is_first_login", False)
     profile_checked = state.get("profile_checked", False)
     profile_soft_defaulted = state.get("profile_soft_defaulted", False)
@@ -1414,6 +1461,11 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 probe_ctx = " Επίσης ανακοίνωσε ότι τα πάει τόσο καλά που θα δοκιμάσεις μια πιο απαιτητική άσκηση — αν τα πάει καλά, τον ανεβάζεις επίπεδο!"
             elif difficulty_probe_direction == "downgrade" and experience != "beginner":
                 probe_ctx = " Επίσης ανακοίνωσε ότι ξεπέρασε τις δυσκολίες και επιστρέφετε σιγά-σιγά στις πιο απαιτητικές ασκήσεις."
+            # Ίδια όρια με _STRUGGLE_ATTEMPTS_THRESHOLD/_STRUGGLE_HINTS_THRESHOLD στο api/routes.py
+            # (_compute_lesson_struggle_flags) — αν χρειάστηκε πολλές προσπάθειες/hints εδώ, πρότεινε
+            # ήπια εξάσκηση σε αυτό το κεφάλαιο μέσω του Button 2 (Εξάσκηση).
+            if attempts >= 3 or hint_count >= 2:
+                probe_ctx += f" Πρότεινε επίσης ήπια ότι αν θέλει παραπάνω εξάσκηση σε '{lesson_title}', μπορεί να δοκιμάσει το κουμπί 'Εξάσκηση' από την αρχική σελίδα."
             congrats = _generate_mentor_response(
                 context=f"Ο μαθητής έλυσε σωστά την άσκηση '{lesson_title}'. Συγχάρεσέ τον και ρώτα αν θέλει να προχωρήσει στην '{next_lesson_title}'.{probe_ctx}",
                 indicative="π.χ. 'Εξαιρετικά! Πάμε στα...' ή 'Μπράβο! Θέλεις να δούμε τα...'",
@@ -1556,7 +1608,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             ])
             if _has_inline_code:
                 # Απαντάμε βάσει του ορατού κώδικα στο chat
-                theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id)
+                theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id, _ascii_visual_already_shown(messages, current_lesson_id))
                 deterministic_content = theory_answer
             elif _is_general_help_request:
                 # Δεν έχει νόημα να ρωτήσουμε "τι εννοείς" — το είπε ήδη ξεκάθαρα. Δίνουμε ΕΝΑ
@@ -1575,7 +1627,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 deterministic_content = starter_hint
             elif _has_inline_question:
                 # Απαντάμε βάσει της συγκεκριμένης ερώτησης στο chat
-                theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id)
+                theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id, _ascii_visual_already_shown(messages, current_lesson_id))
                 deterministic_content = theory_answer
             else:
                 nudge = _generate_mentor_response(
@@ -1587,7 +1639,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 )
                 deterministic_content = nudge
         else:
-            theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id)
+            theory_answer = _answer_theory_question(user_input, lesson_title, theory, tone, current_lesson_id, _ascii_visual_already_shown(messages, current_lesson_id))
             deterministic_content = theory_answer
     elif intent == "other":
         if not profile_checked:

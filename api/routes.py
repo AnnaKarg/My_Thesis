@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException # Εισάγει τα απαραίτητα components από το FastAPI
 import asyncio # Για ασύγχρονες λειτουργίες
 import json # Για φόρτωση των μαθημάτων από το αρχείο JSON
+import random # Για τυχαία επιλογή κεφαλαίου/άσκησης στο Button 2 (εξάσκηση)
 import re
 import time
 from datetime import datetime, timezone
@@ -243,7 +244,7 @@ _ERROR_LABEL_SIMPLE = {
     "off_by_one": "σφάλμα εύρους (off-by-one)",
 }
 
-def _build_course_stats_message(user, total_lessons: int) -> str:
+def _build_course_stats_message(user, total_lessons: int, db_history=None) -> str:
     solved = int(user.solved_tasks or 0)
     avg_time = round(float(user.avg_time_spent or 0.0), 1)
     level_map = {"beginner": "Αρχάριο", "intermediate": "Ενδιάμεσο", "expert": "Προχωρημένο"}
@@ -262,6 +263,21 @@ def _build_course_stats_message(user, total_lessons: int) -> str:
     else:
         error_section = "- **Λάθη:** Καμία επαναλαμβανόμενη δυσκολία εντοπίστηκε"
 
+    # Κεφάλαια όπου χρειάστηκαν πολλές προσπάθειες/hints — πρόταση για εξάσκηση (Button 2)
+    practice_section = ""
+    if db_history is not None:
+        struggle_flags = _compute_lesson_struggle_flags(db_history)
+        struggled_titles = [
+            _LESSON_TITLES_DISPLAY[lid - 1]
+            for lid, flagged in struggle_flags.items()
+            if flagged and 1 <= lid <= len(_LESSON_TITLES_DISPLAY)
+        ]
+        if struggled_titles:
+            practice_section = (
+                f"\n\n**Πρόταση:** Δυσκολεύτηκες λίγο περισσότερο σε: {', '.join(struggled_titles)}. "
+                f"Αξίζει λίγη επιπλέον εξάσκηση εκεί μέσω του κουμπιού «Εξάσκηση» στην αρχική σελίδα."
+            )
+
     return (
         f"**Συγχαρητήρια, {user.username}! Ολοκλήρωσες όλο το πρόγραμμα μαθημάτων Python!**\n\n"
         f"**Τα στατιστικά σου:**\n"
@@ -269,7 +285,8 @@ def _build_course_stats_message(user, total_lessons: int) -> str:
         f"- **Ασκήσεις που λύθηκαν:** {solved}\n"
         f"- **Μέσος χρόνος ανά άσκηση:** {avg_time:.0f} δευτερόλεπτα\n"
         f"- **Τελικό επίπεδο:** {level_display}\n"
-        f"{error_section}\n\n"
+        f"{error_section}"
+        f"{practice_section}\n\n"
         f"Εξαιρετική δουλειά! Συνέχισε να εξασκείσαι — η Python σε περιμένει!"
     )
 
@@ -282,6 +299,9 @@ async def get_db():
 
 _STRUGGLE_ATTEMPTS_THRESHOLD = 3
 _STRUGGLE_HINTS_THRESHOLD = 2
+# Πόσα συνεχόμενα σωστά σε εξάσκηση (Button 2) χρειάζονται σε ένα κεφάλαιο ώστε να σβήσει
+# το struggled flag του στο Open Learner Model, ακόμα κι αν η αρχική ολοκλήρωση ήταν δύσκολη.
+_PRACTICE_STRUGGLE_CLEAR_THRESHOLD = 5
 
 def _compute_lesson_struggle_flags(db_history) -> dict:
     """Ανασυνθέτει ιστορικά attempts/hints ΑΝΑ ΟΛΟΚΛΗΡΩΜΕΝΟ μάθημα σαρώνοντας το chat history μία
@@ -332,6 +352,10 @@ def _compute_mastery_profile(user: User, db_history, struggle_flags: dict = None
         UNDERSTANDING_LEVEL_TO_MASTERY_PCT.get(user.understanding_level or "developing", 50)
         if _has_recent_attempts(db_history) else 0
     )
+    try:
+        practice_streaks = json.loads(user.practice_lesson_correct_streak or "{}")
+    except Exception:
+        practice_streaks = {}
     mastery_profile = []
     for lesson_obj in lessons_content.get("lessons", []):
         lid = lesson_obj.get("id", 0)
@@ -341,11 +365,16 @@ def _compute_mastery_profile(user: User, db_history, struggle_flags: dict = None
             pct = current_mastery
         else:
             pct = 0
+        # Το τριγωνάκι δυσκολίας σβήνει αν ο μαθητής έχει αποδείξει βελτίωση μέσω εξάσκησης
+        # (Button 2) σε αυτό το κεφάλαιο — ανεξάρτητα από το πόσο δύσκολη ήταν η αρχική ολοκλήρωση.
+        struggled = bool(struggle_flags.get(lid, False))
+        if struggled and practice_streaks.get(str(lid), 0) >= _PRACTICE_STRUGGLE_CLEAR_THRESHOLD:
+            struggled = False
         mastery_profile.append({
             "id": lid,
             "title": lesson_obj.get("title", ""),
             "mastery": pct,
-            "struggled": bool(struggle_flags.get(lid, False)),
+            "struggled": struggled,
             "cohort_pct": cohort_pct.get(lid),
         })
     return mastery_profile
@@ -393,6 +422,8 @@ async def session_progress(user_id: int, db: AsyncSession = Depends(get_db)):
     return {
         "experience_level": user.experience_level or "beginner",
         "mastery_profile": _compute_mastery_profile(user, db_history, struggle_flags, cohort_pct),
+        "practice_streak_current": int(user.practice_streak_current or 0),
+        "practice_streak_goal": int(user.practice_streak_goal or 0),
     }
 
 @router.post("/session/{user_id}/abandon_task")
@@ -454,6 +485,123 @@ async def free_check(user_id: int, request: FreeCheckRequest, db: AsyncSession =
 
     return {"mentor_response": response or "Κάτι πήγε στραβά κατά τον έλεγχο του κώδικά σου. Δοκίμασε ξανά."}
 
+class PracticeGoalRequest(BaseModel): # Σχήμα για τον προσωπικό στόχο σερί στο Button 2
+    goal: int
+
+@router.post("/practice/{user_id}/set_goal")
+async def set_practice_goal(user_id: int, request: PracticeGoalRequest, db: AsyncSession = Depends(get_db)):
+    user_result = await db.execute(select(User).filter(User.id == user_id))
+    user = user_result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+    user.practice_streak_goal = max(0, int(request.goal or 0))
+    await db.commit()
+    return {"practice_streak_goal": user.practice_streak_goal}
+
+class PracticeNextTaskRequest(BaseModel): # Σχήμα για αίτημα νέας άσκησης εξάσκησης
+    lesson_ids: list[int]
+
+@router.post("/practice/{user_id}/next_task")
+# Button 2: επιλέγει τυχαία ΕΝΑ από τα επιλεγμένα κεφάλαια (αφού πρώτα επικυρώσει ότι είναι
+# όντως ήδη ολοκληρωμένα — δεν εμπιστευόμαστε τυφλά ό,τι στείλει το frontend) και παράγει άσκηση
+# με το ΙΔΙΟ generate_random_task που ήδη χρησιμοποιεί το κύριο μάθημα (Button 1) — ίδια ποικιλία
+# templates, όχι ξεχωριστό στατικό bank. Stateless: το frontend κρατάει task/criteria τοπικά και
+# τα ξαναστέλνει στο /submit· δεν αποθηκεύεται "τρέχουσα άσκηση εξάσκησης" στη βάση.
+async def practice_next_task(user_id: int, request: PracticeNextTaskRequest, db: AsyncSession = Depends(get_db)):
+    user_result = await db.execute(select(User).filter(User.id == user_id))
+    user = user_result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+
+    all_lessons = lessons_content.get("lessons", [])
+    completed_ids = {l.get("id") for l in all_lessons if l.get("id", 0) < user.current_lesson_id}
+    valid_ids = [lid for lid in (request.lesson_ids or []) if lid in completed_ids]
+    if not valid_ids:
+        raise HTTPException(status_code=400, detail="Δεν έχει επιλεγεί κανένα ολοκληρωμένο κεφάλαιο")
+
+    lesson_id = random.choice(valid_ids)
+    lesson_obj = next((l for l in all_lessons if l.get("id") == lesson_id), None)
+    if not lesson_obj:
+        raise HTTPException(status_code=400, detail="Άγνωστο κεφάλαιο")
+
+    # Adaptive difficulty: το τρέχον σερί (ενιαίο σε όλα τα κεφάλαια εξάσκησης) καθορίζει το
+    # επίπεδο της επόμενης άσκησης — ξεχωριστό από το difficulty_probe_direction του Button 1.
+    difficulty = "hard" if int(user.practice_streak_current or 0) >= 3 else "easy"
+    task_payload = generate_random_task(lesson_obj, difficulty)
+    return {
+        "task": task_payload.get("task_text", ""),
+        "success_criteria": task_payload.get("rendered_criteria", []),
+        "lesson_id": lesson_id,
+        "lesson_title": lesson_obj.get("title", ""),
+        "difficulty": difficulty,
+    }
+
+class PracticeSubmitRequest(BaseModel): # Σχήμα για υποβολή κώδικα εξάσκησης
+    code: str
+    task: str
+    success_criteria: list = []
+    lesson_id: int
+
+@router.post("/practice/{user_id}/submit")
+# Button 2: τρέχει το ΙΔΙΟ pipeline debugger->assessor->mentor με το κύριο μάθημα — πραγματική
+# αξιολόγηση is_correct (σε αντίθεση με το Button 3) — αλλά με practice_mode=True ώστε ο mentor
+# να παρακάμψει όλη την curriculum λογική (θεωρία/advance/[BUTTON:START_TASK], βλ.
+# agents/mentor.py mentoring_node). Ενημερώνει το ενιαίο σερί (μηδενίζεται σε λάθος) και τον
+# per-κεφάλαιο μετρητή που μπορεί να σβήσει το struggled flag στο Open Learner Model.
+async def practice_submit(user_id: int, request: PracticeSubmitRequest, db: AsyncSession = Depends(get_db)):
+    user_result = await db.execute(select(User).filter(User.id == user_id))
+    user = user_result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+
+    code = (request.code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Δεν στάλθηκε κώδικας για έλεγχο")
+
+    state = {
+        "messages": [HumanMessage(content="CODE_SUBMISSION")],
+        "student_code": code,
+        "success_criteria": request.success_criteria or [],
+        "current_task": request.task or "",
+        "practice_mode": True,
+    }
+    try:
+        output = await asyncio.wait_for(
+            langgraph_app.ainvoke(state, config={"recursion_limit": 15}),
+            timeout=60
+        )
+        response = output["messages"][-1].content.strip()
+        is_correct = bool(output.get("is_correct", False))
+    except Exception:
+        response = "Κάτι πήγε στραβά κατά τον έλεγχο. Δοκίμασε ξανά."
+        is_correct = False
+
+    try:
+        lesson_streaks = json.loads(user.practice_lesson_correct_streak or "{}")
+    except Exception:
+        lesson_streaks = {}
+    lid_key = str(request.lesson_id)
+
+    if is_correct:
+        user.practice_streak_current = int(user.practice_streak_current or 0) + 1
+        lesson_streaks[lid_key] = int(lesson_streaks.get(lid_key, 0)) + 1
+    else:
+        user.practice_streak_current = 0
+        lesson_streaks[lid_key] = 0
+    user.practice_lesson_correct_streak = json.dumps(lesson_streaks, ensure_ascii=False)
+
+    goal = int(user.practice_streak_goal or 0)
+    goal_reached = bool(goal > 0 and user.practice_streak_current >= goal)
+    await db.commit()
+
+    return {
+        "mentor_response": response or "Κάτι πήγε στραβά κατά τον έλεγχο. Δοκίμασε ξανά.",
+        "is_correct": is_correct,
+        "practice_streak_current": user.practice_streak_current,
+        "practice_streak_goal": goal,
+        "goal_reached": goal_reached,
+    }
+
 @router.get("/session/{user_id}/welcome") # Endpoint για να πάρει το μήνυμα καλωσορίσματος και την τρέχουσα κατάσταση του χρήστη όταν ξεκινάει μια νέα συνεδρία
 async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     user_result = await db.execute(select(User).filter(User.id == user_id))
@@ -487,27 +635,6 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
         else:
             welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
 
-        # Spaced Repetition Warm-up (Ebbinghaus): αν έχουν περάσει >2 μέρες από την τελευταία συνεδρία
-        # και ο μαθητής έχει ήδη κάνει profile check, ζητάμε recall της προηγούμενης ενότητας.
-        if user.profile_checked:
-            try:
-                last_entry = db_history[-1]
-                if last_entry.created_at:
-                    last_ts = datetime.fromisoformat(last_entry.created_at.replace("Z", "+00:00"))
-                    now_ts = datetime.now(timezone.utc)
-                    days_away = (now_ts - last_ts).total_seconds() / 86400
-                    if days_away > 2 and user.current_lesson_id > 1:
-                        # Βρίσκουμε το ΠΡΟΗΓΟΥΜΕΝΟ μάθημα με βάση το id, όχι raw list index —
-                        # η λίστα lessons δεν είναι πάντα 1-προς-1 ευθυγραμμισμένη με id-1.
-                        prev_lesson = next(
-                            (l for l in lessons_content.get("lessons", []) if l.get("id") == user.current_lesson_id - 1),
-                            None,
-                        )
-                        warmup_q = prev_lesson.get("warmup_question", "") if prev_lesson else ""
-                        if warmup_q:
-                            welcome_message += f"\n\n---\n\n**Επανάληψη σπαγγένης μάθησης:** {warmup_q}"
-            except Exception:
-                pass
     else:
         welcome_message = _build_welcome_message(user.username, db_history, user.current_lesson_id)
 
@@ -584,7 +711,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
 
     # Αν έχει ολοκληρωθεί το πρόγραμμα μαθημάτων, δεν συνεχίζουμε κανονική ροή agents.
     if TOTAL_LESSONS and user.current_lesson_id > TOTAL_LESSONS:
-        ai_response = _build_course_stats_message(user, TOTAL_LESSONS)
+        ai_response = _build_course_stats_message(user, TOTAL_LESSONS, db_history)
         _ts = _now_iso()
         db.add(ChatHistory(user_id=user.id, role="human", content=submission_message, time_spent=0.0, attempts_count=0, session_id=request.session_id, created_at=_ts))
         db.add(ChatHistory(user_id=user.id, role="ai", content=ai_response, session_id=request.session_id, created_at=_ts))
@@ -801,8 +928,9 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         raw_response = output["messages"][-1].content
         # Αφαιρούμε [HINT] και [AWAITING_QUESTIONS] ΜΟΝΟ από την απάντηση προς τον χρήστη.
         # Στο DB αποθηκεύουμε raw_response ώστε να λειτουργούν σωστά τα
-        # _infer_awaiting_questions (ψάχνει [AWAITING_QUESTIONS]) και _count_hints (ψάχνει [HINT]).
-        ai_response = re.sub(r'\n?\[(HINT|AWAITING_QUESTIONS)\]', '', raw_response).strip()
+        # _infer_awaiting_questions (ψάχνει [AWAITING_QUESTIONS]), _count_hints (ψάχνει [HINT])
+        # και _ascii_visual_already_shown (ψάχνει [ASCII_SHOWN:id]).
+        ai_response = re.sub(r'\n?\[(HINT|AWAITING_QUESTIONS|ASCII_SHOWN:\d+)\]', '', raw_response).strip()
         if not ai_response:
             # Ασφαλιστική δικλείδα: σπάνια το LLM επιστρέφει επιτυχώς αλλά με κενό/μόνο-foreign-
             # script περιεχόμενο (π.χ. _strip_foreign_scripts αφαιρεί τα πάντα) — χωρίς αυτό ο
@@ -912,7 +1040,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
             user.current_lesson_id = TOTAL_LESSONS + 1
             user.pending_advance = False
             course_completed = True
-            ai_response = _build_course_stats_message(user, TOTAL_LESSONS)
+            ai_response = _build_course_stats_message(user, TOTAL_LESSONS, db_history)
             user.active_task_lesson_id = 0
             user.active_task_text = ""
             user.active_success_criteria = "[]"
