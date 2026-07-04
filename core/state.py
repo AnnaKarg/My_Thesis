@@ -38,3 +38,6 @@ class AgentState(TypedDict): # Ορισμός της δομής του state τ�
 
     profile_soft_defaulted: bool
     previous_task: str
+
+    free_check_mode: bool  # True → Button 3 (ελεύθερος έλεγχος κώδικα): debugger τρέχει, assessor παρακάμπτεται
+    free_check_description: str  # η δική του περιγραφή πρόθεσης του μαθητή, αντί για current_task/success_criteria

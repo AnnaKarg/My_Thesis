@@ -1,3 +1,8 @@
+import sys
+if sys.stdout.encoding != "utf-8": # Αποτρέπει UnicodeEncodeError σε Windows console (cp1252) όταν τυπώνονται Ελληνικά
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from api.routes import router as chat_router

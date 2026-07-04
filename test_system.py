@@ -258,9 +258,9 @@ def run_intent_tests():
 
         # Κατά τη διάρκεια άσκησης
         ("δεν καταλαβαίνω το λάθος", True, True, "theory_question", "Asks for help → theory_question (per prompt)"),
-        ("1",               True,  True,  "menu_1",         "Menu 1"),
-        ("2",               True,  True,  "menu_2",         "Menu 2"),
-        ("3",               True,  True,  "menu_3",         "Menu 3"),
+        ("1",               True,  True,  "other",          "Menu σβήστηκε — μονοψήφιο '1' είναι πλέον gibberish/other"),
+        ("2",               True,  True,  "other",          "Menu σβήστηκε — μονοψήφιο '2' είναι πλέον gibberish/other"),
+        ("3",               True,  True,  "other",          "Menu σβήστηκε — μονοψήφιο '3' είναι πλέον gibberish/other"),
     ]
 
     for inp, pc, ts, expected, desc in cases:

@@ -23,6 +23,13 @@ export default function App() {
   const [showProgressModal, setShowProgressModal] = useState(false);
   const [showLeaveTaskConfirm, setShowLeaveTaskConfirm] = useState(false);
   const [pendingFreshTaskOnReturn, setPendingFreshTaskOnReturn] = useState(false);
+  // Button 3 — ελεύθερος έλεγχος κώδικα (χωρίς βαθμολόγηση, ξεχωριστό από τη ροή μαθημάτων)
+  const [freeCheckCode, setFreeCheckCode] = useState('');
+  const [freeCheckDescription, setFreeCheckDescription] = useState('');
+  const [freeCheckResponse, setFreeCheckResponse] = useState(null);
+  const [freeCheckLoading, setFreeCheckLoading] = useState(false);
+  const [freeCheckError, setFreeCheckError] = useState('');
+  const FREE_CHECK_MAX_CHARS = 2000;
   // Custom tooltip (portal-based, ΟΧΙ position:absolute μέσα στο modal) — το native title ήταν
   // αναξιόπιστο/αργό, και το πρώτο absolute-positioned πείραμα έκοβε πάνω/πλάγια από το modal
   // overflow. Με portal στο document.body + fixed coordinates, ΔΕΝ κόβεται ποτέ από κανένα container.
@@ -234,6 +241,32 @@ export default function App() {
 
   const handleEnterMentor = () => {
     setCurrentView('mentor');
+  };
+
+  const handleEnterFreeCheck = () => {
+    setFreeCheckCode('');
+    setFreeCheckDescription('');
+    setFreeCheckResponse(null);
+    setFreeCheckError('');
+    setCurrentView('free_check');
+  };
+
+  const handleFreeCheckSubmit = async () => {
+    if (!user?.id || !freeCheckCode.trim() || freeCheckLoading) return;
+    setFreeCheckLoading(true);
+    setFreeCheckError('');
+    setFreeCheckResponse(null);
+    try {
+      const res = await axios.post(`${API_BASE}/free_check/${user.id}`, {
+        code: freeCheckCode,
+        description: freeCheckDescription,
+      });
+      setFreeCheckResponse(res.data.mentor_response);
+    } catch (err) {
+      setFreeCheckError(err.response?.data?.detail || 'Κάτι πήγε στραβά κατά τον έλεγχο. Δοκίμασε ξανά.');
+    } finally {
+      setFreeCheckLoading(false);
+    }
   };
 
   const handleGoHomeClick = () => {
@@ -567,14 +600,18 @@ export default function App() {
               <span style={{ fontSize: '0.78rem', background: '#222', color: '#555', padding: '4px 12px', borderRadius: '20px' }}>Σύντομα...</span>
             </div>
 
-            {/* Κάρτα 3: Αξιολόγηση κώδικα — σύντομα */}
-            <div style={{ background: '#161616', border: '2px solid #2a2a2a', borderRadius: '20px', padding: '36px 24px', width: '240px', textAlign: 'center', opacity: 0.55, boxSizing: 'border-box', cursor: 'not-allowed' }}>
-              <FileCode size={52} color="#444" style={{ marginBottom: '18px' }} />
-              <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem', color: '#555' }}>Αξιολόγηση Κώδικα</h3>
-              <p style={{ color: '#444', fontSize: '0.88rem', margin: '0 0 16px', lineHeight: '1.55' }}>
+            {/* Κάρτα 3: Αξιολόγηση κώδικα — Button 3, ελεύθερος έλεγχος κώδικα */}
+            <div
+              onClick={handleEnterFreeCheck}
+              style={{ background: '#1e1e1e', border: '2px solid #4caf50', borderRadius: '20px', padding: '36px 24px', width: '240px', cursor: 'pointer', textAlign: 'center', boxShadow: '0 4px 20px rgba(76,175,80,0.12)', transition: 'transform 0.15s, box-shadow 0.15s', boxSizing: 'border-box' }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-5px)'; e.currentTarget.style.boxShadow = '0 10px 32px rgba(76,175,80,0.28)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(76,175,80,0.12)'; }}
+            >
+              <FileCode size={52} color="#4caf50" style={{ marginBottom: '18px' }} />
+              <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem' }}>Αξιολόγηση Κώδικα</h3>
+              <p style={{ color: '#888', fontSize: '0.88rem', margin: 0, lineHeight: '1.55' }}>
                 Ανέβασε δικό σου κώδικα για ανάλυση
               </p>
-              <span style={{ fontSize: '0.78rem', background: '#222', color: '#555', padding: '4px 12px', borderRadius: '20px' }}>Σύντομα...</span>
             </div>
           </div>
 
@@ -666,6 +703,85 @@ export default function App() {
             </div>
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (currentView === 'free_check') {
+    const codeTooLong = freeCheckCode.length > FREE_CHECK_MAX_CHARS;
+
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'sans-serif', overflowY: 'auto' }}>
+        <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2a2a2a', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <FileCode size={22} color="#4caf50" />
+            <strong style={{ fontSize: '1.05rem' }}>Αξιολόγηση Κώδικα</strong>
+          </div>
+          <button onClick={() => setCurrentView('landing')} style={{ background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', fontSize: '0.9rem' }}>
+            ← Αρχική
+          </button>
+        </div>
+
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px 20px', gap: '18px' }}>
+          <div style={{ width: '100%', maxWidth: '720px' }}>
+            <p style={{ color: '#888', fontSize: '0.9rem', margin: '0 0 24px', textAlign: 'center' }}>
+              Δοκίμασε ελεύθερα τον δικό σου κώδικα — δεν επηρεάζει την πρόοδό σου στα μαθήματα.
+            </p>
+
+            <label style={{ display: 'block', color: '#ccc', fontSize: '0.85rem', marginBottom: '6px' }}>
+              Τι θέλεις να κάνει ο κώδικάς σου; (προαιρετικό, αλλά βοηθάει την ανάλυση)
+            </label>
+            <textarea
+              value={freeCheckDescription}
+              onChange={e => setFreeCheckDescription(e.target.value)}
+              placeholder="π.χ. 'θέλω να υπολογίσω το άθροισμα μιας λίστας αριθμών'"
+              rows={2}
+              style={{ width: '100%', boxSizing: 'border-box', background: '#1e1e1e', border: '1px solid #333', borderRadius: '10px', color: 'white', padding: '10px 12px', fontSize: '0.9rem', fontFamily: 'sans-serif', resize: 'vertical', marginBottom: '16px' }}
+            />
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+              <label style={{ color: '#ccc', fontSize: '0.85rem' }}>Κώδικας</label>
+              <span style={{ fontSize: '0.78rem', color: codeTooLong ? '#ef5350' : '#666' }}>
+                {freeCheckCode.length} / {FREE_CHECK_MAX_CHARS}
+              </span>
+            </div>
+            <div style={{ border: '1px solid #333', borderRadius: '10px', overflow: 'hidden', height: '260px' }}>
+              <Editor
+                height="100%"
+                theme="vs-dark"
+                defaultLanguage="python"
+                defaultValue=""
+                onChange={(value) => setFreeCheckCode(value ?? '')}
+                options={{ fontSize: 15, quickSuggestions: false, suggestOnTriggerCharacters: false, acceptSuggestionOnEnter: 'off' }}
+              />
+            </div>
+
+            <button
+              onClick={handleFreeCheckSubmit}
+              disabled={!freeCheckCode.trim() || freeCheckLoading || codeTooLong}
+              style={{
+                marginTop: '18px', width: '100%', padding: '13px', borderRadius: '10px', border: 'none',
+                background: (!freeCheckCode.trim() || freeCheckLoading || codeTooLong) ? '#2a2a2a' : '#4caf50',
+                color: (!freeCheckCode.trim() || freeCheckLoading || codeTooLong) ? '#666' : '#0d1f0f',
+                fontWeight: 700, fontSize: '0.95rem', cursor: (!freeCheckCode.trim() || freeCheckLoading || codeTooLong) ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {freeCheckLoading ? 'Έλεγχος...' : 'Έλεγχος'}
+            </button>
+
+            {freeCheckError && (
+              <div style={{ marginTop: '18px', background: '#2a1616', border: '1px solid #5c2b2b', borderRadius: '10px', padding: '14px 16px', color: '#ef9a9a', fontSize: '0.9rem' }}>
+                {freeCheckError}
+              </div>
+            )}
+
+            {freeCheckResponse && (
+              <div style={{ marginTop: '18px', background: '#1e1e1e', border: '1px solid #333', borderRadius: '10px', padding: '16px 18px', color: '#ddd', fontSize: '0.92rem', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+                {freeCheckResponse}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     );
   }

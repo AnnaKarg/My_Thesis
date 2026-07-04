@@ -240,16 +240,13 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
 
     Επιστρέφει ένα από:
       profile_yes | profile_no | wants_task | theory_question |
-      advance_lesson | menu_1 | menu_2 | menu_3 | code_help | other
+      advance_lesson | code_help | other
     """
     stripped = (user_input or "").strip()
 
     # ── Deterministic shortcuts ΠΡΙΝ το gibberish check ────────────────────────
-    # (Gibberish θα έπιανε "1"/"2"/"3" ως 1-χαρακτήρα και κώδικα ως "str"/"pyt" cluster)
     if not stripped:
         return "other"
-    if stripped in {"1", "2", "3"}:
-        return f"menu_{stripped}"
     if "```" in stripped or stripped.lower().startswith("υποβολή κώδικα") or stripped.upper() == "CODE_SUBMISSION":
         return "code_help"
 
@@ -356,7 +353,7 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
         intent = result.content.strip().lower().split()[0] if result.content.strip() else "other"
         valid = {
             "profile_yes", "profile_no", "wants_task", "theory_question",
-            "advance_lesson", "menu_1", "menu_2", "menu_3", "code_help", "other"
+            "advance_lesson", "code_help", "other"
         }
         return intent if intent in valid else "other"
     except Exception:
@@ -426,6 +423,56 @@ def _answer_theory_question(user_input: str, lesson_title: str, theory: str, ton
             f"Καλή ερώτηση! Ας ξαναδούμε τη θεωρία:\n\n{theory}\n\n"
             "Αν κάτι εξακολουθεί να είναι ασαφές, ρώτα πιο συγκεκριμένα!"
         )
+
+
+def _generate_free_check_response(debug_report: str, student_description: str) -> str:
+    """Button 3 (ελεύθερος έλεγχος κώδικα): εδώ ο mentor μιλάει απευθείας με τον debugger —
+    δεν υπάρχει assessor σε αυτό το μονοπάτι (βλ. core/app.py debugger_router), άρα δεν
+    δημιουργείται δεύτερη πηγή αλήθειας όπως θα συνέβαινε στο κανονικό pipeline.
+
+    Σε αντίθεση με το _generate_hint_with_llm (βαθμολογούμενη άσκηση, κρύβει σκόπιμα τη λύση),
+    εδώ ο μαθητής ζήτησε ρητά ανάλυση του δικού του κώδικα χωρίς καμία βαθμολόγηση — άρα ο
+    mentor μπορεί να είναι άμεσος για το πρόβλημα, χωρίς παιδαγωγική απόκρυψη.
+    """
+    report = debug_report or ""
+
+    if "[DEBUG: EMPTY]" in report:
+        return "Δεν βλέπω κώδικα να ελέγξω — γράψε κάτι στον editor και πάτα ξανά Έλεγχος."
+
+    if "[DEBUG: ERROR]" in report:
+        # Γνήσιο συντακτικό λάθος από τον parser — ίδια deterministic ερμηνεία με το κανονικό flow
+        return _targeted_hint_text(debug_report, "easy", "")
+
+    is_ok = report.strip().startswith("[DEBUG: OK]")
+    description_text = student_description.strip() if student_description and student_description.strip() else "(δεν έδωσε περιγραφή)"
+
+    if is_ok:
+        prompt_text = (
+            f"Είσαι καθηγητής Python. Ο μαθητής σου έδωσε δικό του κώδικα για ελεύθερο έλεγχο "
+            f"(όχι βαθμολογούμενη άσκηση).\n\n"
+            f"Τι ήθελε να κάνει ο κώδικας (δική του περιγραφή): {description_text}\n"
+            f"Εύρημα ανάλυσης: {report}\n\n"
+            f"Γράψε 1-2 προτάσεις που επιβεβαιώνουν ότι ο κώδικας φαίνεται σωστός. "
+            f"Απευθύνσου στον μαθητή σε β' ενικό. ΜΗΝ γράψεις κώδικα.\n\nΑπάντηση:"
+        )
+    else:
+        prompt_text = (
+            f"Είσαι καθηγητής Python. Ο μαθητής σου έδωσε δικό του κώδικα για ελεύθερο έλεγχο "
+            f"(όχι βαθμολογούμενη άσκηση) — σου ζήτησε ρητά ανάλυση, όχι hint για γρίφο.\n\n"
+            f"Τι ήθελε να κάνει ο κώδικας (δική του περιγραφή): {description_text}\n"
+            f"Εύρημα ανάλυσης: {report}\n\n"
+            f"Εξήγησε καθαρά και άμεσα τι πρόβλημα εντοπίστηκε, βασισμένος ΑΠΟΚΛΕΙΣΤΙΚΑ στο εύρημα "
+            f"ανάλυσης παραπάνω — ΜΗΝ υποθέσεις πρόσθετα προβλήματα που δεν αναφέρονται εκεί. "
+            f"Σε αντίθεση με κανονικό hint άσκησης, εδώ ΜΠΟΡΕΙΣ να είσαι συγκεκριμένος για το πρόβλημα. "
+            f"ΜΗΝ γράψεις διορθωμένο κώδικα, μόνο εξήγησε το πρόβλημα. Απευθύνσου σε β' ενικό.\n\nΑπάντηση:"
+        )
+
+    try:
+        result = llm.invoke(prompt_text)
+        response = _strip_thinking(result.content)
+        return response if response else f"Εντόπισα το εξής: {report.split(chr(10))[-1].lstrip('- ')}"
+    except Exception:
+        return f"Εντόπισα το εξής: {report.split(chr(10))[-1].lstrip('- ')}"
 
 
 def _generate_hint_with_llm(
@@ -1086,6 +1133,15 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     messages = state.get("messages", [])
     user_input = messages[-1].content if messages else ""
 
+    # Button 3 (ελεύθερος έλεγχος κώδικα) — παρακάμπτει εντελώς όλη την λογική μαθήματος/άσκησης
+    # παρακάτω (θεωρία, task generation, assessment tags). Ο debugger έτρεξε ήδη (βλ.
+    # core/app.py debugger_router), ο assessor ΔΕΝ τρέχει καθόλου σε αυτό το μονοπάτι.
+    if state.get("free_check_mode"):
+        response = _generate_free_check_response(
+            state.get("debug_report", ""), state.get("free_check_description", "")
+        )
+        return {"messages": [AIMessage(content=response)]}
+
     is_first_login = state.get("is_first_login", False)
     profile_checked = state.get("profile_checked", False)
     profile_soft_defaulted = state.get("profile_soft_defaulted", False)
@@ -1198,7 +1254,6 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     if awaiting_questions and not wants_task and intent not in {"theory_question", "code_help", "other"} and not _is_not_ready_msg:
         wants_task = True
     next_chapter_request = intent == "advance_lesson"
-    menu_choice = intent if intent.startswith("menu_") else None  # "menu_1", "menu_2", "menu_3" ή None
 
     # ── Current Context (για το system prompt του LLM fallback) ─────────────
     current_context = ""
@@ -1216,12 +1271,6 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             current_context = "Ο μαθητής δεν υπέβαλε κώδικα για 40+ δευτερόλεπτα. Δώσε 1 σύντομο παιδαγωγικό hint χωρίς λύση."
         else:
             current_context = f"Ο μαθητής δουλεύει στην άσκηση της ενότητας {lesson_title}. Υπενθύμισέ του σύντομα την εκφώνηση χωρίς να δώσεις hint."
-    elif menu_choice == "menu_1":
-        current_context = f"Ο μαθητής επέλεξε επανάληψη θεωρίας. Παρουσίασε ξανά τη θεωρία της ενότητας {lesson_title} σύντομα."
-    elif menu_choice == "menu_2":
-        current_context = f"Ο μαθητής επέλεξε νέα άσκηση για την ενότητα {lesson_title}."
-    elif menu_choice == "menu_3":
-        current_context = f"Ο μαθητής ζητά hints. Debug Report: {debug_report}. Δώσε στοχευμένο hint."
     elif next_chapter_request and task_started and last_assessment_decision in {"repeat", "support"}:
         current_context = "Ο μαθητής ζητά να προχωρήσει, αλλά η τελευταία αξιολόγηση δείχνει ότι χρειάζεται επανάληψη/υποστήριξη. Εξήγησε ευγενικά γιατί και πρότεινε επιλογές."
     elif is_correct:
@@ -1332,36 +1381,6 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             must_not="γράψεις πλήρη λύση ή κώδικα"
         )
         deterministic_content = timeout_msg or f"Κοίτα ξανά την εκφώνηση: {task}"
-    elif menu_choice == "menu_1":
-        intro, outro = _generate_mentor_intro_outro(
-            context=f"Ο μαθητής ζητά επανάληψη της θεωρίας '{lesson_title}' — η θεωρία ακολουθεί αμέσως αυτούσια· μετά χρειάζεται και κλείνουσα ερώτηση.",
-            intro_indicative="π.χ. 'Φυσικά! Να:' ή 'Ορίστε:'",
-            outro_indicative="π.χ. 'Πιο ξεκάθαρο; Ή πάμε σε άσκηση!'",
-            tone="φιλικά",
-            intro_must_not="εξηγήσεις ή αναφέρεσαι στο περιεχόμενο της θεωρίας — αυτή ακολουθεί",
-            outro_must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
-        )
-        deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
-    elif menu_choice == "menu_2":
-        task_intro = _generate_mentor_response(
-            context=f"Δίνεις νέα άσκηση στον μαθητή στην ενότητα '{lesson_title}'. Η εκφώνηση ακολουθεί αμέσως — γράψε μόνο μια σύντομη εναρκτήρια φράση.",
-            indicative="π.χ. 'Ορίστε!' ή 'Να:' ή 'Πάμε!'",
-            tone="φιλικά, ζωηρά",
-            brief=True,
-            must_not="γράψεις οτιδήποτε που μοιάζει με εκφώνηση άσκησης — αυτή ακολουθεί αυτούσια αμέσως μετά"
-        )
-        deterministic_content = f"{task_intro}\n\n{task}\n\n[BUTTON:START_TASK]"
-    elif menu_choice == "menu_3":
-        hint_text = _generate_hint_with_llm(debug_report, task, difficulty, understanding_level, assessment_feedback, frequent_errors, avg_hints_per_task, hint_count)
-        hint_intro, hint_outro = _generate_mentor_intro_outro(
-            context=f"Ο μαθητής ζήτησε hint για την άσκηση '{lesson_title}'. Μια υπόδειξη ακολουθεί αμέσως αυτούσια· μετά χρειάζεται ενθάρρυνση να τη δοκιμάσει.",
-            intro_indicative="π.χ. 'Κοίτα εδώ:' ή 'Ορίστε μια υπόδειξη:'",
-            outro_indicative="π.χ. 'Δοκίμασε και πες μου!' ή 'Βλέπεις τώρα;'",
-            tone="παιδαγωγικά, φιλικά",
-            intro_must_not="γράψεις ή επαναλάβεις την υπόδειξη — αυτή ακολουθεί αυτούσια",
-            outro_must_not="επαναλάβεις την υπόδειξη",
-        )
-        deterministic_content = f"{hint_intro}\n\n{hint_text}\n\n{hint_outro}\n\n[ASSESSMENT:SUPPORT]\n[HINT]"
     elif next_chapter_request and task_started:
         # Bug 2 fix: ο μαθητής ζητά να παραλείψει την άσκηση — ΔΕΝ επιτρέπεται.
         # Ο LLM αποφασίζει αυτόνομα το επιχείρημα (βάσει σημαντικότητας/θέσης της ενότητας),

@@ -411,6 +411,49 @@ async def abandon_active_task(user_id: int, db: AsyncSession = Depends(get_db)):
     await db.commit()
     return {"message": "Η άσκηση εγκαταλείφθηκε."}
 
+FREE_CHECK_MAX_CHARS = 2000
+
+class FreeCheckRequest(BaseModel): # Σχήμα για το Button 3 (ελεύθερος έλεγχος κώδικα)
+    code: str
+    description: str = ""
+
+@router.post("/free_check/{user_id}")
+# Button 3: ελεύθερος έλεγχος κώδικα, ΧΩΡΙΣ βαθμολόγηση — ξεχωριστό, αυτόνομο endpoint
+# αντί για νέο flag μέσα στο ήδη πολύπλοκο /chat/{user_id} (profile-check, pending_advance,
+# attempts/hint tracking, ChatHistory εγγραφές) ώστε να ΜΗΝ αγγίζεται καθόλου η υπάρχουσα
+# λογική βαθμολογούμενων ασκήσεων. Δεν γράφει τίποτα στο ChatHistory — stateless per-request,
+# δεν επηρεάζει καμία πρόοδο/στατιστικό του μαθητή.
+async def free_check(user_id: int, request: FreeCheckRequest, db: AsyncSession = Depends(get_db)):
+    user_result = await db.execute(select(User).filter(User.id == user_id))
+    user = user_result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+
+    code = (request.code or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Δεν στάλθηκε κώδικας για έλεγχο")
+    if len(code) > FREE_CHECK_MAX_CHARS:
+        raise HTTPException(status_code=400, detail=f"Ο κώδικας ξεπερνά το όριο των {FREE_CHECK_MAX_CHARS} χαρακτήρων")
+
+    state = {
+        "messages": [HumanMessage(content="CODE_SUBMISSION")],
+        "student_code": code,
+        "success_criteria": [],
+        "current_task": (request.description or "").strip(),
+        "free_check_mode": True,
+        "free_check_description": (request.description or "").strip(),
+    }
+    try:
+        output = await asyncio.wait_for(
+            langgraph_app.ainvoke(state, config={"recursion_limit": 10}),
+            timeout=60
+        )
+        response = output["messages"][-1].content.strip()
+    except Exception:
+        response = "Κάτι πήγε στραβά κατά τον έλεγχο του κώδικά σου. Δοκίμασε ξανά."
+
+    return {"mentor_response": response or "Κάτι πήγε στραβά κατά τον έλεγχο του κώδικά σου. Δοκίμασε ξανά."}
+
 @router.get("/session/{user_id}/welcome") # Endpoint για να πάρει το μήνυμα καλωσορίσματος και την τρέχουσα κατάσταση του χρήστη όταν ξεκινάει μια νέα συνεδρία
 async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     user_result = await db.execute(select(User).filter(User.id == user_id))
