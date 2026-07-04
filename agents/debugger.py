@@ -9,11 +9,12 @@ load_dotenv()
 BUILTIN_NAMES = set(dir(builtins))
 
 DEBUGGER_SYSTEM_PROMPT = (
-    "Είσαι ο Debugging Agent, ειδικευμένος στη σημασιολογική ανάλυση κώδικα Python μαθητών. "
-    "Εντοπίζεις λογικές αποκλίσεις από τα ζητούμενα που δεν φαίνονται σε στατική ανάλυση."
+    "Είσαι ο Debugging Agent, ειδικευμένος στην ανάλυση κώδικα Python μαθητών. "
+    "Κρίνεις μόνος σου, βασισμένος ΑΠΟΚΛΕΙΣΤΙΚΑ στα δομικά στοιχεία και ευρήματα που σου δίνονται "
+    "(ποτέ σε υποθέσεις), αν υπάρχει πρόβλημα στον κώδικα και ποιο είναι."
 )
 
-llm_debugger = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0)
+llm_debugger = ChatGroq(model_name="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0)
 
 def _criteria_text(success_criteria) -> str:
     if isinstance(success_criteria, list):
@@ -143,12 +144,23 @@ class _Analyzer(ast.NodeVisitor):
             self.has_zero_index = True
         self.generic_visit(node)
 
-def _deterministic_findings(tree, success_criteria, current_task=""):
+
+def _gather_facts(tree, success_criteria, current_task=""):
+    """Deterministic AST/keyword ανάλυση — παράγει 'δομημένη γνώση' (facts) που τροφοδοτεί
+    την απόφαση του LLM, ΧΩΡΙΣ η ίδια να αποφασίζει την τελική κατηγορία ή έξοδο.
+
+    Επιστρέφει:
+    - facts: list[(sentence, category)] — ΤΑ ΙΔΙΑ εντοπισμένα ευρήματα με πριν (ίδιες συνθήκες,
+      ίδιες προτάσεις), σε προτεραιότητα εμφάνισης. Το "category" ΔΕΝ δίνεται στο LLM — υπάρχει
+      μόνο ως ασφαλιστική δικλείδα για το deterministic fallback αν αποτύχει η κλήση στο LLM.
+    - raw_flags: πλήρες στιγμιότυπο των δομικών στοιχείων του κώδικα, ΑΚΟΜΑ ΚΙ ΑΝ δεν
+      ενεργοποίησαν κανένα εύρημα — έτσι το LLM κρίνει πάνω σε πλήρη εικόνα, όχι μόνο σε
+      'συναγερμούς' που ενδέχεται να το οδηγήσουν σε λανθασμένο συμπέρασμα.
+    """
     analyzer = _Analyzer()
     analyzer.visit(tree)
 
-    findings = []
-    categories = set()
+    facts = []
     # Συνδυάζουμε criteria + task text ώστε λέξεις-κλειδιά από εκφώνηση να εντοπίζονται
     criteria_text = (_criteria_text(success_criteria) + " " + (current_task or "")).lower()
 
@@ -158,153 +170,240 @@ def _deterministic_findings(tree, success_criteria, current_task=""):
     )
     # Bug 3: λίστα.len() αντί len(λίστα)
     if analyzer.has_len_method:
-        categories.add("method_error")
-        findings.append("Χρήση .len() ως μέθοδος — δεν υπάρχει. Χρησιμοποίησε len(λίστα) αντί για λίστα.len().")
+        facts.append(("Χρήση .len() ως μέθοδος — δεν υπάρχει. Χρησιμοποίησε len(λίστα) αντί για λίστα.len().", "method_error"))
 
     if undefined:
-        categories.add("undefined_name")
-        findings.append("Χρήση μεταβλητής πριν από ανάθεση: " + ", ".join(undefined))
+        facts.append(("Χρήση μεταβλητής πριν από ανάθεση: " + ", ".join(undefined), "undefined_name"))
 
     if (re.search(r'\bif\b', criteria_text) or "δομή" in criteria_text) and not analyzer.has_if:
-        categories.add("missing_if")
-        findings.append("Απουσία δομής if ενώ απαιτείται από τα κριτήρια.")
+        facts.append(("Απουσία δομής if ενώ απαιτείται από τα κριτήρια.", "missing_if"))
 
     if ("for" in criteria_text or "επανάληψ" in criteria_text) and not analyzer.has_for:
-        categories.add("missing_for")
-        findings.append("Απουσία for loop ενώ απαιτείται από τα κριτήρια.")
+        facts.append(("Απουσία for loop ενώ απαιτείται από τα κριτήρια.", "missing_for"))
 
     if ("def" in criteria_text or "συνάρτη" in criteria_text) and not analyzer.has_def:
-        categories.add("missing_function")
-        findings.append("Απουσία ορισμού συνάρτησης (def).")
+        facts.append(("Απουσία ορισμού συνάρτησης (def).", "missing_function"))
 
     if "append" in criteria_text and not analyzer.has_append:
-        categories.add("missing_append")
-        findings.append("Απουσία χρήσης append() ενώ ζητείται.")
+        facts.append(("Απουσία χρήσης append() ενώ ζητείται.", "missing_append"))
 
     if ("λίστα" in criteria_text or "[]" in criteria_text) and not analyzer.has_list:
-        categories.add("missing_list")
-        findings.append("Απουσία λίστας ([]) ενώ ζητείται.")
+        facts.append(("Απουσία λίστας ([]) ενώ ζητείται.", "missing_list"))
 
     if ("index" in criteria_text or "[0]" in criteria_text) and not analyzer.has_index:
-        categories.add("missing_index")
-        findings.append("Απουσία πρόσβασης με index ενώ ζητείται.")
+        facts.append(("Απουσία πρόσβασης με index ενώ ζητείται.", "missing_index"))
 
     # Λίστα υπάρχει αλλά είναι άδεια ενώ η εκφώνηση ζητά στοιχεία (append exercises εξαιρούνται)
     if (analyzer.has_list and "append" not in criteria_text
             and analyzer.has_empty_list and not analyzer.has_nonempty_list):
         if any(kw in criteria_text for kw in ["στοιχεί", "string", "αριθμ", "τιμ"]):
-            categories.add("empty_list")
-            findings.append(
-                "Η λίστα σου είναι άδεια ([]). "
-                "Η εκφώνηση ζητά στοιχεία μέσα σε αυτήν — πρόσθεσέ τα απευθείας."
-            )
+            facts.append((
+                "Η λίστα είναι άδεια ([]). Η εκφώνηση ζητά στοιχεία μέσα σε αυτήν — πρόσθεσέ τα απευθείας.",
+                "empty_list",
+            ))
 
     # Λάθος τιμή index: η εκφώνηση ζητά [0] αλλά χρησιμοποιείται διαφορετικό index
     if "[0]" in criteria_text and analyzer.has_index and not analyzer.has_zero_index:
-        categories.add("wrong_index")
-        findings.append(
-            "Χρησιμοποιείς λάθος index. Η εκφώνηση ζητά [0] για να πάρεις το πρώτο στοιχείο."
-        )
+        facts.append((
+            "Χρησιμοποιείται λάθος index. Η εκφώνηση ζητά [0] για να πάρει το πρώτο στοιχείο.",
+            "wrong_index",
+        ))
 
     # Bug 1: αθροιστής (+=) απαιτείται αλλά λείπει
     if ("άθροισμ" in criteria_text or "αθροιστ" in criteria_text) and analyzer.has_for and not analyzer.has_aug_assign:
-        categories.add("missing_accumulator")
-        findings.append("Λείπει ο αθροιστής (total += ...). Χρησιμοποίησε μια μεταβλητή που ξεκινά από 0 και αυξάνεται σε κάθε επανάληψη.")
+        facts.append(("Λείπει ο αθροιστής (total += ...). Χρειάζεται μεταβλητή που ξεκινά από 0 και αυξάνεται σε κάθε επανάληψη.", "missing_accumulator"))
 
     # print(func_ref) — συνάρτηση περνά ως αναφορά αντί να καλείται (print(process) αντί print(process(...)))
     _bare_in_print = [
         a for a in analyzer.print_args
         if a in analyzer.defined_functions or a in analyzer.func_aliases
     ]
-    if _bare_in_print and not (analyzer.called_functions & analyzer.defined_functions):
-        categories.add("print_func_ref")
-        findings.append(
-            "Το print() λαμβάνει τη συνάρτηση ως αναφορά αντί να την καλεί. "
-            "Χρησιμοποίησε print(process(τιμή1, τιμή2)) αντί print(process)."
-        )
+    _has_print_func_ref = bool(_bare_in_print) and not (analyzer.called_functions & analyzer.defined_functions)
+    if _has_print_func_ref:
+        facts.append((
+            "Το print() λαμβάνει τη συνάρτηση ως αναφορά αντί να την καλεί (π.χ. print(process) αντί print(process(...))).",
+            "print_func_ref",
+        ))
 
     # Λάθος αριθμός ορισμάτων στην κλήση συνάρτησης (π.χ. process() αντί process(a, b))
-    if analyzer.wrong_call_args and "print_func_ref" not in categories:
+    if analyzer.wrong_call_args and not _has_print_func_ref:
         fname, expected, actual = analyzer.wrong_call_args[0]
-        categories.add("wrong_arg_count")
-        findings.append(
-            f"Η {fname}() καλείται με {actual} ορίσματα ενώ χρειάζεται {expected}."
-        )
+        facts.append((f"Η {fname}() καλείται με {actual} ορίσματα ενώ χρειάζεται {expected}.", "wrong_arg_count"))
 
     if ("τύπων" in criteria_text or "print" in criteria_text) and not analyzer.has_print:
         if analyzer.print_overwritten:
             # Ειδικό λάθος: print = (...) αντί print(...)
-            categories.add("print_as_variable")
-            findings.append("print_as_variable: ο μαθητής έγραψε 'print = (...)' αντί 'print(...)'.")
+            facts.append(("Ο μαθητής έγραψε 'print = (...)' αντί 'print(...)' — η print αντικαταστάθηκε ως μεταβλητή.", "print_as_variable"))
         elif (analyzer.has_def
               and analyzer.defined_functions
               and not (analyzer.called_functions & analyzer.defined_functions)):
             # Bug 5: συνάρτηση ορίστηκε αλλά δεν καλείται ποτέ — αιτία του ελλείποντος print()
-            categories.add("missing_call")
-            findings.append(
-                "Συνάρτηση ορίζεται αλλά δεν καλείται ποτέ. "
-                "Πρόσθεσε κλήση έξω από τη συνάρτηση και τύπωσε το αποτέλεσμα με print()."
-            )
+            facts.append(("Συνάρτηση ορίζεται αλλά δεν καλείται ποτέ — γι' αυτό λείπει το output.", "missing_call"))
         else:
-            categories.add("missing_output")
-            findings.append("Απουσία print() ενώ ζητείται output.")
+            facts.append(("Απουσία print() ενώ ζητείται output.", "missing_output"))
 
     if ("αριθμη" in criteria_text or "χωρίς εισαγωγικά" in criteria_text) and analyzer.quoted_number_vars:
-        categories.add("type_mismatch")
-        findings.append("Αριθμητική τιμή αποθηκεύτηκε ως string στις μεταβλητές: " + ", ".join(sorted(set(analyzer.quoted_number_vars))))
+        facts.append((
+            "Αριθμητική τιμή αποθηκεύτηκε ως string στις μεταβλητές: " + ", ".join(sorted(set(analyzer.quoted_number_vars))),
+            "type_mismatch",
+        ))
 
     # Λίστα με string στοιχεία αντί αριθμητικά (π.χ. ["α","β","γ"] αντί [1,2,3])
     if analyzer.list_has_only_strings and analyzer.has_for and any(
         kw in criteria_text for kw in ["αριθμ", "τετράγων", "τετραγων", "number", "num"]
     ):
-        categories.add("wrong_list_type")
-        findings.append(
-            "Η λίστα περιέχει strings (κείμενο σε εισαγωγικά) αντί για αριθμητικά στοιχεία. "
-            "Χρησιμοποίησε αριθμούς χωρίς εισαγωγικά, π.χ. [1, 2, 3]."
-        )
+        facts.append((
+            "Η λίστα περιέχει strings (κείμενο σε εισαγωγικά) αντί για αριθμητικά στοιχεία.",
+            "wrong_list_type",
+        ))
 
     # print() χωρίς ορίσματα ενώ η εκφώνηση ζητά συγκεκριμένο output
     if analyzer.has_empty_print and any(
         kw in criteria_text for kw in ["τύπωσε", "τύπωνε", "εκτύπωσε", "print"]
     ):
-        categories.add("empty_print")
-        findings.append(
-            "Χρησιμοποιείς print() χωρίς τίποτα μέσα — τυπώνεται κενή γραμμή. "
-            "Πρόσθεσε μέσα αυτό που θέλεις να εμφανιστεί: print('κείμενο') ή print(μεταβλητή)."
-        )
+        facts.append((
+            "Χρησιμοποιείται print() χωρίς τίποτα μέσα — τυπώνεται κενή γραμμή.",
+            "empty_print",
+        ))
 
-    return findings, sorted(categories)
+    raw_flags = {
+        "has_if": analyzer.has_if,
+        "has_for": analyzer.has_for,
+        "has_def": analyzer.has_def,
+        "has_append": analyzer.has_append,
+        "has_index": analyzer.has_index,
+        "has_list": analyzer.has_list,
+        "has_print": analyzer.has_print,
+        "has_empty_print": analyzer.has_empty_print,
+        "has_aug_assign": analyzer.has_aug_assign,
+        "has_len_method": analyzer.has_len_method,
+        "undefined_names": undefined,
+        "quoted_number_vars": sorted(set(analyzer.quoted_number_vars)),
+        "list_has_only_strings": analyzer.list_has_only_strings,
+        "wrong_call_args": analyzer.wrong_call_args,
+    }
+    return facts, raw_flags
 
-def _semantic_analysis(student_code: str, success_criteria, current_task: str) -> str:
-    """LLM semantic analysis: εντοπίζει λογικά λάθη που δεν φαίνονται σε AST.
-    Καλείται μόνο όταν δεν υπάρχουν structural errors — αποφεύγει διπλό έλεγχο."""
-    if not current_task or not student_code.strip():
-        return ""
+
+# Σταθερό λεξιλόγιο κατηγοριών — ΤΑΥΤΟΣΗΜΟ με τα tags που ήδη αναγνωρίζει ο Mentor
+# (has_structural_error / _targeted_hint_text / _ERROR_CATEGORY_LABELS στο agents/mentor.py) και
+# ο routes.py (_extract_debug_categories). Το LLM ΠΡΕΠΕΙ να επιλέξει μία εξ αυτών — δεν εφευρίσκει
+# νέα κατηγορία. Οι περιγραφές είναι το μόνο πλαίσιο που έχει το LLM για να ταιριάξει σωστά τα
+# ευρήματα (ή δικές του σημασιολογικές παρατηρήσεις) σε κατηγορία.
+_DEBUG_CATEGORIES = {
+    "method_error": "χρήση .len() ως μέθοδος σε λίστα αντί της συνάρτησης len(λίστα)",
+    "undefined_name": "χρήση μεταβλητής που δεν έχει οριστεί/αναγνωριστεί ακόμα",
+    "missing_if": "λείπει δομή if/elif/else ενώ απαιτείται από την εκφώνηση/κριτήρια",
+    "missing_for": "λείπει for loop ενώ απαιτείται",
+    "missing_function": "λείπει ορισμός συνάρτησης (def) ενώ απαιτείται",
+    "missing_append": "λείπει χρήση .append() ενώ απαιτείται",
+    "missing_list": "λείπει δημιουργία λίστας ([]) ενώ απαιτείται",
+    "missing_index": "λείπει πρόσβαση σε στοιχείο λίστας με index ενώ απαιτείται",
+    "empty_list": "η λίστα δημιουργήθηκε άδεια ενώ η εκφώνηση ζητά στοιχεία μέσα της",
+    "wrong_index": "χρησιμοποιείται λάθος index (όχι [0] όπου ζητείται το πρώτο στοιχείο)",
+    "missing_accumulator": "λείπει αθροιστής (total += ...) σε loop άθροισης",
+    "print_func_ref": "το print() καλείται με αναφορά συνάρτησης αντί να την καλέσει (print(f) αντί print(f()))",
+    "wrong_arg_count": "συνάρτηση καλείται με λάθος αριθμό ορισμάτων",
+    "print_as_variable": "το print αντικαταστάθηκε ως μεταβλητή (print = ...) αντί να χρησιμοποιηθεί ως συνάρτηση",
+    "missing_call": "συνάρτηση ορίζεται σωστά αλλά δεν καλείται ποτέ",
+    "type_mismatch": "μια αριθμητική τιμή είναι ΚΥΡΙΟΛΕΚΤΙΚΑ γραμμένη σε εισαγωγικά ΣΤΟΝ ΥΠΑΡΧΟΝΤΑ κώδικα (π.χ. age = \"25\") — ΟΧΙ όταν μια μεταβλητή απλώς λείπει ή λέγεται διαφορετικά",
+    "wrong_list_type": "λίστα περιέχει strings αντί αριθμητικά στοιχεία όπου ζητούνται αριθμοί",
+    "empty_print": "το print() καλείται χωρίς κανένα όρισμα",
+    "missing_output": "λείπει εντελώς η εντολή print() ενώ ζητείται εμφάνιση αποτελέσματος",
+    "general_logic": "οποιοδήποτε άλλο σημασιολογικό/λογικό πρόβλημα που δεν ταιριάζει στις παραπάνω κατηγορίες",
+}
+
+_LLM_DEBUG_RE = re.compile(
+    r"ΚΑΤΑΣΤΑΣΗ\s*:\s*(.*?)\s*ΚΑΤΗΓΟΡΙΑ\s*:\s*(.*?)\s*ΕΞΗΓΗΣΗ\s*:\s*(.*)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _reason_about_code(student_code: str, success_criteria, current_task: str, facts, raw_flags):
+    """Η μοναδική κλήση στο LLM που αποφασίζει αν υπάρχει πρόβλημα στον κώδικα — δομικό ή
+    σημασιολογικό — και ποια κατηγορία ταιριάζει, βασισμένη ΑΠΟΚΛΕΙΣΤΙΚΑ στα δεδομένα (δομημένη
+    γνώση) που της δίνονται. Αντικαθιστά τόσο την παλιά if/elif απόφαση κατηγορίας όσο και το
+    ξεχωριστό _semantic_analysis call — μία ενιαία κρίση αντί για δύο διαδοχικές.
+    Επιστρέφει (status, category, explanation) με status ∈ {"OK", "PROBLEM"}.
+    """
     criteria_text = _criteria_text(success_criteria)
+
+    flags_lines = "\n".join(f"- {k}: {v}" for k, v in raw_flags.items())
+    findings_lines = "\n".join(f"- {sentence}" for sentence, _cat in facts) or "Κανένα εύρημα από κανόνες."
+    categories_lines = "\n".join(f"- {tag}: {desc}" for tag, desc in _DEBUG_CATEGORIES.items())
+
     prompt = (
         f"{DEBUGGER_SYSTEM_PROMPT}\n\n"
         f"Εκφώνηση: {current_task}\n"
         f"Κριτήρια: {criteria_text}\n"
         f"Κώδικας μαθητή:\n{student_code}\n\n"
-        f"Ελέγξε αν ο κώδικας ικανοποιεί τα ζητούμενα της εκφώνησης σημασιολογικά.\n"
-        f"ΣΗΜΑΝΤΙΚΟ: Τα Ελληνικά ονόματα μεταβλητών/παραμέτρων (π.χ. α, β, γ, αποτέλεσμα) "
-        f"είναι ΠΛΗΡΩΣ ΕΓΚΥΡΑ στην Python 3 — ΜΗΝ τα σημαίνεις ποτέ ως λάθος.\n"
-        f"Έλεγξε ΕΙΔΙΚΑ:\n"
+        f"ΔΟΜΙΚΑ ΣΤΟΙΧΕΙΑ (από στατική ανάλυση — δεδομένα, ΟΧΙ γνώμη):\n{flags_lines}\n\n"
+        f"ΕΥΡΗΜΑΤΑ ΚΑΝΟΝΩΝ (τι ενεργοποιήθηκε από deterministic ελέγχους βάσει κριτηρίων):\n{findings_lines}\n\n"
+        f"Πέρα από τα παραπάνω, έλεγξε ΚΑΙ σημασιολογικά:\n"
         f"- Αν οι τιμές που τυπώνονται (print) ταιριάζουν ΑΚΡΙΒΩΣ με αυτές της εκφώνησης (κεφαλαία/μικρά, ορθογραφία)\n"
         f"- Αν η λογική των if/elif/else κλάδων είναι αντεστραμμένη (π.χ. τυπώνει 'High' αντί 'Low')\n"
         f"- Αν μια συνθήκη ελέγχει λάθος τιμή ή χρησιμοποιεί λάθος τελεστή (>, <, >=, <=)\n"
         f"- Αν η συνάρτηση ορίζεται σωστά (σωστό όνομα, παράμετροι, return) και καλείται σωστά\n"
-        f"Αν βρεις ΟΠΟΙΟΔΗΠΟΤΕ από αυτά τα προβλήματα, γράψε 1 σύντομη πρόταση που περιγράφει ΤΙ ακριβώς είναι λάθος.\n"
-        f"Αν ο κώδικας είναι πλήρως σωστός, γράψε ΜΟΝΟ: OK\n\nΑνάλυση:"
+        f"ΣΗΜΑΝΤΙΚΟ: Τα Ελληνικά ονόματα μεταβλητών/παραμέτρων (π.χ. α, β, γ, αποτέλεσμα) "
+        f"είναι ΠΛΗΡΩΣ ΕΓΚΥΡΑ στην Python 3 — ΜΗΝ τα σημαίνεις ποτέ ως λάθος.\n"
+        f"ΣΗΜΑΝΤΙΚΟ: ΜΗΝ ελέγχεις αν ΟΛΕΣ οι μεταβλητές που ζητά η εκφώνηση υπάρχουν στον κώδικα, "
+        f"ούτε αν τα ΟΝΟΜΑΤΑ τους ταιριάζουν ακριβώς με αυτά που αναφέρει η εκφώνηση (π.χ. αν λείπει "
+        f"ΤΕΛΕΙΩΣ μια μεταβλητή, ή αν ζητά 'age' και ο μαθητής έγραψε 'ag'/'years') — αυτό ΔΕΝ είναι "
+        f"δική σου ευθύνη, το ελέγχει ήδη ξεχωριστό σύστημα (strict task matching). ΜΗΝ το σημάνεις "
+        f"ΠΟΤΕ ως 'type_mismatch' ούτε καμία άλλη κατηγορία — αγνόησέ το εντελώς, ακόμα κι αν λείπει "
+        f"ολόκληρη μεταβλητή τύπου string/αριθμού. Το 'type_mismatch' ΙΣΧΥΕΙ ΑΠΟΚΛΕΙΣΤΙΚΑ όταν μια "
+        f"αριθμητική τιμή είναι ΚΥΡΙΟΛΕΚΤΙΚΑ γραμμένη μέσα σε εισαγωγικά ΣΤΟΝ ΥΠΑΡΧΟΝΤΑ κώδικα "
+        f"(π.χ. age = \"25\") — ΠΟΤΕ όταν μια μεταβλητή απλώς λείπει ή λέγεται διαφορετικά. Εστίασε "
+        f"ΜΟΝΟ στη ΔΟΜΗ, στους ΤΥΠΟΥΣ ΤΙΜΩΝ μεταβλητών που ΥΠΑΡΧΟΥΝ, και στη ΛΟΓΙΚΗ του κώδικα.\n\n"
+        f"Έργο σου: απόφασε αν υπάρχει πρόβλημα στον κώδικα βάσει ΤΩΝ ΠΑΡΑΠΑΝΩ στοιχείων (δομικών "
+        f"και σημασιολογικών) — ΜΗΝ υποθέσεις προβλήματα που δεν προκύπτουν από αυτά.\n"
+        f"Αν υπάρχει πρόβλημα, επίλεξε ΑΚΡΙΒΩΣ ΜΙΑ κατηγορία από αυτή τη λίστα (όποια ταιριάζει καλύτερα):\n"
+        f"{categories_lines}\n\n"
+        f"Αν το πρόβλημα ΔΕΝ ταιριάζει με σιγουριά σε ΚΑΠΟΙΑ συγκεκριμένη κατηγορία (π.χ. είναι για "
+        f"λείπουσα/λάθος-ονομασμένη μεταβλητή, όχι δομικό/τύπου πρόβλημα), χρησιμοποίησε "
+        f"'general_logic' — ΜΗΝ διαλέξεις την πιο κοντινή κατηγορία αν στην πραγματικότητα δεν ταιριάζει.\n\n"
+        f"Απάντησε ΑΚΡΙΒΩΣ σε αυτή τη μορφή, τίποτα άλλο πριν ή μετά:\n"
+        f"ΚΑΤΑΣΤΑΣΗ: OK ή PROBLEM\n"
+        f"ΚΑΤΗΓΟΡΙΑ: <μία από τις παραπάνω κατηγορίες, ή καμία αν ΚΑΤΑΣΤΑΣΗ=OK>\n"
+        f"ΕΞΗΓΗΣΗ: <1-2 προτάσεις τεχνική περιγραφή του προβλήματος, ή \"Δεν εντοπίστηκαν προβλήματα.\" αν OK>"
     )
+
     try:
         result = llm_debugger.invoke(prompt)
-        analysis = result.content.strip()
-        if not analysis or analysis.strip().upper().startswith("OK"):
-            return ""
-        return analysis
+        content = (result.content or "").strip()
+        match = _LLM_DEBUG_RE.search(content)
+        if not match:
+            raise ValueError("unparseable debugger response")
+
+        status_raw, category_raw, explanation = (g.strip() for g in match.groups())
+        status = "OK" if status_raw.upper().startswith("OK") else "PROBLEM"
+
+        if status == "OK":
+            return "OK", "", explanation or "Δεν εντοπίστηκαν προβλήματα."
+
+        category = category_raw.strip().lower()
+        if category not in _DEBUG_CATEGORIES:
+            category = "general_logic"
+        # Σκληρή επικύρωση έναντι δομημένων δεδομένων: το LLM επιμένει μερικές φορές σε
+        # 'type_mismatch' ακόμα κι όταν η ίδια η εξήγησή του παραδέχεται ότι δεν υπάρχει τέτοιο
+        # πρόβλημα (π.χ. όταν το πραγματικό ζήτημα είναι μια εντελώς λείπουσα μεταβλητή) — το
+        # prompt από μόνο του δεν αρκεί πάντα. Το raw_flags["quoted_number_vars"] είναι ήδη
+        # υπολογισμένο deterministic γεγονός: αν είναι κενό, ΔΕΝ υπάρχει καμία μεταβλητή με
+        # αριθμητική τιμή σε εισαγωγικά στον κώδικα, άρα η κατηγορία type_mismatch είναι αδύνατο
+        # να ισχύει — υποβιβάζεται σε general_logic αντί να περάσει ένας αβάσιμος ισχυρισμός.
+        if category == "type_mismatch" and not raw_flags.get("quoted_number_vars"):
+            category = "general_logic"
+        if not explanation:
+            explanation = _DEBUG_CATEGORIES.get(category, "Εντοπίστηκε πρόβλημα.")
+        return "PROBLEM", category, explanation
     except Exception:
-        return ""
+        # Ασφαλιστική δικλείδα ΜΟΝΟ για τεχνική αποτυχία (timeout, σφάλμα δικτύου, unparseable
+        # απάντηση) — ΟΧΙ πρωτεύων μηχανισμός απόφασης. Χρησιμοποιεί το πρώτο (υψηλότερης
+        # προτεραιότητας) ενεργοποιημένο εύρημα, ακριβώς όπως αποφάσιζε το παλιό if/elif chain.
+        if facts:
+            sentence, category = facts[0]
+            return "PROBLEM", category, sentence
+        return "OK", "", "Δεν εντοπίστηκαν συντακτικά/λογικά προβλήματα από deterministic έλεγχο."
 
 
 def debugging_node(state):
@@ -332,26 +431,18 @@ def debugging_node(state):
             "debug_report": f"[DEBUG: ERROR] Συντακτικό λάθος: {e.msg} (γραμμή {e.lineno})."
         }
 
-    findings, categories = _deterministic_findings(tree, success_criteria, current_task)
+    facts, raw_flags = _gather_facts(tree, success_criteria, current_task)
+    status, category, explanation = _reason_about_code(
+        student_code, success_criteria, current_task, facts, raw_flags
+    )
 
-    if findings:
-        technical = "\n".join(f"- {item}" for item in findings)
-        categories_text = ", ".join(categories) if categories else "general_logic"
-        return {
-            "debug_report": (
-                "[DEBUG: RULE_FAIL] Εντοπίστηκαν τεχνικά προβλήματα.\n"
-                f"[DEBUG:CATEGORIES] {categories_text}\n"
-                f"{technical}"
-            )
-        }
-
-    # Structural analysis passed → LLM semantic analysis για λογικά λάθη
-    semantic = _semantic_analysis(student_code, success_criteria, current_task)
-    if semantic:
-        return {
-            "debug_report": f"[DEBUG: SEMANTIC] {semantic}"
-        }
+    if status == "OK":
+        return {"debug_report": f"[DEBUG: OK] {explanation}"}
 
     return {
-        "debug_report": "[DEBUG: OK] Δεν εντοπίστηκαν συντακτικά/λογικά προβλήματα από deterministic έλεγχο."
+        "debug_report": (
+            "[DEBUG: RULE_FAIL] Εντοπίστηκαν τεχνικά προβλήματα.\n"
+            f"[DEBUG:CATEGORIES] {category}\n"
+            f"- {explanation}"
+        )
     }

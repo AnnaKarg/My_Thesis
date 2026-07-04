@@ -12,40 +12,7 @@ ASSESSOR_SYSTEM_PROMPT = (
     "Μηδενική ανοχή σε νοηματικά λάθη τύπων δεδομένων. Το περιεχόμενο χωρίς τη σωστή μορφή θεωρείται λανθασμένο"
 )
 
-llm_assessor = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0.1)
-
-
-def _generate_assessment_feedback(
-    is_correct: bool,
-    raw_findings: str,
-    current_task: str,
-    understanding_level: str,
-) -> str:
-    """Παράγει σύντομη τεχνική περιγραφή των ευρημάτων για χρήση ΩΣ CONTEXT από τον Mentor.
-    ΔΕΝ εμφανίζεται απευθείας στον μαθητή — τροφοδοτεί τον Mentor για παραγωγή hint.
-
-    PASS: επιστρέφει αμέσως χωρίς LLM κλήση (δεν χρειάζεται για context).
-    FAIL: LLM συνοψίζει ελεύθερα τα τεχνικά ευρήματα σε σύντομο context.
-    """
-    if is_correct:
-        # Δεν χρειάζεται LLM για PASS — ο Mentor ξέρει ήδη ότι πέρασε
-        return "Όλα τα κριτήρια ικανοποιούνται."
-
-    prompt = (
-        f"{ASSESSOR_SYSTEM_PROMPT}\n\n"
-        f"Εκφώνηση: {current_task}\n"
-        f"Τεχνικά ευρήματα: {raw_findings}\n"
-        f"Επίπεδο κατανόησης: {understanding_level}\n\n"
-        f"Συνόψισε τι χρειάζεται διόρθωση με βάση ΑΠΟΚΛΕΙΣΤΙΚΑ τα παραπάνω ευρήματα.\n"
-        f"ΜΗΝ υποθέσεις πρόσθετα προβλήματα. ΜΗΝ δώσεις τη λύση.\n"
-        f"Το κείμενο θα χρησιμοποιηθεί ως context από τον Mentor, όχι απευθείας στον μαθητή.\n\n"
-        f"Σύνοψη ευρημάτων:"
-    )
-    try:
-        result = llm_assessor.invoke(prompt)
-        return result.content.strip() or raw_findings
-    except Exception:
-        return raw_findings
+llm_assessor = ChatGroq(model_name="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0.1)
 
 NUMERIC_TARGET_NAMES = {
     "age", "score", "year", "num_var", "n1", "n2", "num", "limit",
@@ -91,7 +58,10 @@ def _safe_literal_eval(node):
     return None
 
 def _extract_assignments(student_code: str):
-    tree = ast.parse(student_code)
+    try:
+        tree = ast.parse(student_code)
+    except SyntaxError:
+        return {}
     assignments = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
@@ -168,7 +138,14 @@ def _normalize_criteria(success_criteria):
     return ["Ο κώδικας πρέπει να είναι λειτουργικός."]
 
 def _build_flags(student_code: str):
-    tree = ast.parse(student_code)
+    try:
+        tree = ast.parse(student_code)
+    except SyntaxError:
+        return {
+            "has_assign": False, "has_if": False, "has_for": False, "has_def": False,
+            "has_return": False, "has_print": False, "has_append": False,
+            "has_list": False, "has_index": False,
+        }
     return {
         "has_assign": any(isinstance(n, ast.Assign) for n in ast.walk(tree)),
         "has_if": any(isinstance(n, ast.If) for n in ast.walk(tree)),
@@ -182,7 +159,10 @@ def _build_flags(student_code: str):
     }
 
 def _numeric_string_assignments(student_code: str):
-    tree = ast.parse(student_code)
+    try:
+        tree = ast.parse(student_code)
+    except SyntaxError:
+        return []
     issues = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
@@ -250,6 +230,23 @@ def _string_mismatch_detected(student_code: str, current_lesson: str):
     return bool(violating_vars), sorted(set(violating_vars))
 
 
+def _empty_string_list_elements_detected(student_code: str, current_lesson: str):
+    """Ελέγχει αν λίστα περιέχει ΜΟΝΟ κενά strings ('') — π.χ. scores=['','','']. Μόνο για το
+    μάθημα Λιστών. Επιστρέφει (bool, περιγραφή)."""
+    if "Lists" not in current_lesson:
+        return False, ""
+    try:
+        tree = ast.parse(student_code)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.List):
+                elts = node.value.elts
+                if elts and any(isinstance(e, ast.Constant) and e.value == "" for e in elts):
+                    return True, "Η λίστα περιέχει μόνο κενά strings (''). Τα στοιχεία πρέπει να έχουν πραγματικές τιμές."
+    except Exception:
+        pass
+    return False, ""
+
+
 def _count_print_calls(student_code: str) -> int:
     """Μετράει πόσα print() calls υπάρχουν στον κώδικα."""
     try:
@@ -265,7 +262,8 @@ def _count_print_calls(student_code: str) -> int:
 
 def _get_printed_string_values(student_code: str) -> set:
     """Επιστρέφει τα literal string ορίσματα που εμφανίζονται σε print() calls.
-    Π.χ. print("High") → {"High"}.
+    Π.χ. print("High") → {"High"}. Επίσης αναγνωρίζει literal τμήματα μέσα σε f-strings,
+    π.χ. print(f"Τιμή: {x}") → {"Τιμή: "}.
     Χρησιμοποιείται για να ελέγξουμε αν η εκφώνηση ζητά συγκεκριμένο string output
     (π.χ. 'High'/'Low') και ο μαθητής το έχει αντεστραμμένο."""
     try:
@@ -278,12 +276,19 @@ def _get_printed_string_values(student_code: str) -> set:
             for arg in node.args:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     printed.add(arg.value)
+                elif isinstance(arg, ast.JoinedStr):
+                    for part in arg.values:
+                        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                            printed.add(part.value)
     return printed
 
 def _get_printed_var_names(student_code: str) -> set:
     """Επιστρέφει το σύνολο ονομάτων μεταβλητών που εμφανίζονται ως ορίσματα σε print() calls.
     Π.χ. print(age) και print(name) → {"age", "name"}.
-    Π.χ. print(age) και print(age) → {"age"} — δύο prints, μία μεταβλητή."""
+    Π.χ. print(age) και print(age) → {"age"} — δύο prints, μία μεταβλητή.
+    Αναγνωρίζει ΚΑΙ μεταβλητές μέσα σε f-strings, π.χ. print(f"{age} χρονών") → {"age"} —
+    χωρίς αυτό, κάθε f-string print εμφανιζόταν σαν να μην τυπώνει καμία από τις ζητούμενες
+    μεταβλητές, προκαλώντας ψευδές 'λείπει το print()' εύρημα σε απολύτως σωστό κώδικα."""
     try:
         tree = ast.parse(student_code)
     except SyntaxError:
@@ -294,6 +299,10 @@ def _get_printed_var_names(student_code: str) -> set:
             for arg in node.args:
                 if isinstance(arg, ast.Name):
                     printed.add(arg.id)
+                elif isinstance(arg, ast.JoinedStr):
+                    for part in arg.values:
+                        if isinstance(part, ast.FormattedValue) and isinstance(part.value, ast.Name):
+                            printed.add(part.value.id)
     return printed
 
 def _strict_task_matching(student_code: str, current_task: str):
@@ -421,125 +430,259 @@ def _understanding_level(score, attempts, hint_count, is_correct):
 # αντί για δύο ανεξάρτητα συντηρημένα dicts (routes.py είχε δικό του αντίγραφο πριν).
 UNDERSTANDING_LEVEL_TO_MASTERY_PCT = {"needs_support": 20, "developing": 50, "good": 75, "strong": 95}
 
-def assessment_node(state):# Κύρια λογική του Assessment Agent
+_VALID_DECISIONS = {"advance", "repeat", "support"}
+_VALID_UNDERSTANDING_LEVELS = {"needs_support", "developing", "good", "strong"}
+
+_ERROR_REPORT_TAGS = ("[DEBUG: ERROR]", "[DEBUG: EMPTY]", "[DEBUG: RULE_FAIL]")
+
+_LLM_ASSESSMENT_RE = re.compile(
+    r"ΣΩΣΤΟ\s*:\s*(.*?)\s*ΑΠΟΦΑΣΗ\s*:\s*(.*?)\s*ΚΑΤΑΝΟΗΣΗ\s*:\s*(.*?)\s*FEEDBACK\s*:\s*(.*)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _gather_assessment_facts(debug_report, student_code, success_criteria, current_lesson,
+                              current_task, attempts_count, hint_count, time_spent) -> dict:
+    """Συγκεντρώνει ΟΛΑ τα αντικειμενικά, deterministic ευρήματα (δομημένη γνώση) που θα
+    τροφοδοτήσουν την ολιστική κρίση του LLM. Καμία απόφαση (is_correct/decision) δεν παίρνεται
+    εδώ — μόνο μέτρηση γεγονότων, ίδια ακριβώς λογική με πριν, απλά χωρίς να αποφασίζει η ίδια."""
+    type_mismatch = _type_mismatch_detected(student_code, success_criteria, current_lesson)
+    string_mismatch = _string_mismatch_detected(student_code, current_lesson)
+    empty_list_issue = _empty_string_list_elements_detected(student_code, current_lesson)
+    strict_match_ok, strict_failures = _strict_task_matching(student_code, current_task)
+
+    flags = _build_flags(student_code)
+    criteria = _normalize_criteria(success_criteria)
+    per_criterion = [(criterion, _criterion_passed(criterion, flags)) for criterion in criteria]
+    passed = sum(1 for _, ok in per_criterion if ok)
+    total = len(per_criterion)
+
+    # Μηδενική βαθμολογία σε "σκληρή" παραβίαση (τεχνικό πρόβλημα από debugger, type/string
+    # mismatch, κενά strings σε λίστα, ή strict-match αποτυχία) — η ίδια σημασιολογία με πριν:
+    # score=0 σημαίνει θεμελιώδες πρόβλημα, ενδιάμεσο score σημαίνει "μερικά κριτήρια
+    # ικανοποιήθηκαν" σε κώδικα που τουλάχιστον τρέχει σωστά τύπους/ονόματα. Χωρίς αυτό, ο
+    # καθαρά δομικός έλεγχος κριτηρίων (_criterion_passed) δεν βλέπει καθόλου undefined names/
+    # type mismatches, οπότε θα ανέφερε παραπλανητικά υψηλό score παρά το is_correct=False.
+    has_hard_violation = (
+        (bool(debug_report) and any(tag in debug_report for tag in _ERROR_REPORT_TAGS))
+        or type_mismatch[0]
+        or string_mismatch[0]
+        or empty_list_issue[0]
+        or not strict_match_ok
+    )
+    score = 0 if has_hard_violation else (int((passed / total) * 100) if total else 0)
+
+    return {
+        "debug_report": debug_report,
+        "type_mismatch": type_mismatch,       # (bool, [vars])
+        "string_mismatch": string_mismatch,   # (bool, [vars])
+        "empty_list_issue": empty_list_issue, # (bool, description)
+        "strict_match_ok": strict_match_ok,
+        "strict_failures": strict_failures,
+        "per_criterion": per_criterion,
+        "score": score,
+        "passed": passed,
+        "total": total,
+        "attempts_count": attempts_count,
+        "hint_count": hint_count,
+        "time_spent": time_spent,
+    }
+
+
+def _fallback_feedback_text(facts: dict) -> str:
+    """Κείμενο feedback όταν δεν είναι διαθέσιμη η ελεύθερη περιγραφή του LLM — αναπαράγει
+    ακριβώς το ίδιο μήνυμα που έδινε το αντίστοιχο deterministic gate πριν."""
+    type_mismatch_ok, type_vars = facts["type_mismatch"]
+    string_mismatch_ok, string_vars = facts["string_mismatch"]
+    empty_list_ok, empty_list_desc = facts["empty_list_issue"]
+
+    if facts["debug_report"] and any(tag in facts["debug_report"] for tag in _ERROR_REPORT_TAGS):
+        return "Ο κώδικας χρειάζεται διόρθωση βάσει τεχνικού report."
+    if type_mismatch_ok:
+        return f"Οι μεταβλητές {', '.join(type_vars)} έχουν αριθμητική τιμή γραμμένη ως string (με εισαγωγικά)."
+    if string_mismatch_ok:
+        return f"Οι μεταβλητές {', '.join(string_vars)} πρέπει να έχουν τιμή τύπου string (μέσα σε εισαγωγικά)."
+    if empty_list_ok:
+        return empty_list_desc
+    if not facts["strict_match_ok"]:
+        return " | ".join(facts["strict_failures"])
+    failed = [criterion for criterion, ok in facts["per_criterion"] if not ok]
+    return "Κριτήρια που δεν ικανοποιήθηκαν: " + "; ".join(failed) if failed else "Απαιτείται επιπλέον εξάσκηση."
+
+
+def _needs_support_escalation(attempts_count: int, hint_count: int, time_spent: float) -> bool:
+    """Κατώφλια που εγγυώνται μετάβαση σε 'support' όταν ο μαθητής δυσκολεύεται πραγματικά —
+    ασφαλιστική δικλείδα πάνω από την κρίση του LLM, όχι υποκατάστατό της. Προστέθηκε γιατί σε
+    live testing το LLM έμενε σε 'repeat' επ' αόριστον ακόμα και μετά από 7 συνεχόμενες
+    αποτυχίες στην ίδια άσκηση — τα κατώφλια (ίδια με το παλιό deterministic σύστημα) εγγυώνται
+    ότι η ενεργή υποστήριξη θα προσφερθεί έστω κι αν το LLM δεν το "πρόσεξε" μόνο του."""
+    return attempts_count >= 3 or hint_count >= 2 or time_spent > 180
+
+
+def _fallback_assessment(facts: dict) -> dict:
+    """Ελαφρύ δίχτυ ασφαλείας ΜΟΝΟ για τεχνική αποτυχία της κλήσης στο LLM (timeout, σφάλμα
+    δικτύου, unparseable/άκυρη απάντηση) — ΟΧΙ πρωτεύων μηχανισμός απόφασης. Συνοψίζει σε ΕΝΑ
+    σημείο ό,τι πριν ήταν σκορπισμένο σε πέντε ξεχωριστά deterministic gates."""
+    type_mismatch_ok, _ = facts["type_mismatch"]
+    string_mismatch_ok, _ = facts["string_mismatch"]
+    empty_list_ok, _ = facts["empty_list_issue"]
+    has_error_report = bool(facts["debug_report"]) and any(tag in facts["debug_report"] for tag in _ERROR_REPORT_TAGS)
+
+    is_correct = (
+        not has_error_report
+        and not type_mismatch_ok
+        and not string_mismatch_ok
+        and not empty_list_ok
+        and facts["strict_match_ok"]
+        and facts["total"] > 0
+        and facts["passed"] == facts["total"]
+    )
+
+    attempts_count = facts["attempts_count"]
+    hint_count = facts["hint_count"]
+    time_spent = facts["time_spent"]
+
+    if is_correct:
+        decision = "repeat" if (attempts_count >= 4 or hint_count >= 3) else "advance"
+    else:
+        decision = "support" if _needs_support_escalation(attempts_count, hint_count, time_spent) else "repeat"
+
+    understanding_level = _understanding_level(facts["score"], attempts_count, hint_count, is_correct)
+    feedback = "Όλα τα κριτήρια ικανοποιούνται." if is_correct else _fallback_feedback_text(facts)
+
+    return {
+        "is_correct": is_correct,
+        "assessment_decision": decision,
+        "understanding_level": understanding_level,
+        "assessment_feedback": feedback,
+    }
+
+
+def _reason_about_assessment(facts: dict, current_task: str) -> dict:
+    """Η μοναδική κλήση στο LLM που κρίνει ΟΛΙΣΤΙΚΑ αν ο κώδικας είναι σωστός, τι πρέπει να
+    γίνει παιδαγωγικά (advance/repeat/support) και πόσο καλά έχει κατανοήσει ο μαθητής —
+    βασισμένη ΑΠΟΚΛΕΙΣΤΙΚΑ στα αντικειμενικά ευρήματα του _gather_assessment_facts. Αντικαθιστά
+    τα πέντε ανεξάρτητα deterministic gates ΚΑΙ το ξεχωριστό _generate_assessment_feedback call
+    — μία ενιαία κρίση αντί για σκόρπιες φόρμουλες."""
+    per_criterion_lines = "\n".join(
+        f"- {'OK' if ok else 'FAIL'}: {criterion}" for criterion, ok in facts["per_criterion"]
+    ) or "Δεν υπάρχουν καθορισμένα κριτήρια."
+
+    type_mismatch_ok, type_vars = facts["type_mismatch"]
+    string_mismatch_ok, string_vars = facts["string_mismatch"]
+    empty_list_ok, empty_list_desc = facts["empty_list_issue"]
+
+    prompt = (
+        f"{ASSESSOR_SYSTEM_PROMPT}\n\n"
+        f"Εκφώνηση: {current_task}\n"
+        f"Κριτήρια:\n{per_criterion_lines}\n\n"
+        f"Αναφορά Debugger: {facts['debug_report'] or 'Καμία.'}\n\n"
+        f"ΑΝΤΙΚΕΙΜΕΝΙΚΑ ΕΥΡΗΜΑΤΑ (δεδομένα από deterministic ελέγχους — ΟΧΙ γνώμη):\n"
+        f"- Score βάσει κριτηρίων: {facts['score']}/100 ({facts['passed']}/{facts['total']} κριτήρια ικανοποιούνται)\n"
+        f"- Type mismatch (αριθμός γραμμένος ως string): "
+        f"{'ΝΑΙ, στις μεταβλητές: ' + ', '.join(type_vars) if type_mismatch_ok else 'ΟΧΙ'}\n"
+        f"- String mismatch (string-type μεταβλητή με μη-string τιμή): "
+        f"{'ΝΑΙ, στις μεταβλητές: ' + ', '.join(string_vars) if string_mismatch_ok else 'ΟΧΙ'}\n"
+        f"- Κενά strings σε λίστα: {'ΝΑΙ — ' + empty_list_desc if empty_list_ok else 'ΟΧΙ'}\n"
+        f"- Strict task matching (ονόματα/τιμές/prints που ζητά η εκφώνηση): "
+        f"{'ΟΛΑ ΟΚ' if facts['strict_match_ok'] else 'ΑΠΕΤΥΧΕ — ' + '; '.join(facts['strict_failures'])}\n\n"
+        f"ΙΣΤΟΡΙΚΟ ΜΑΘΗΤΗ:\n"
+        f"- Προσπάθειες σε αυτή την άσκηση: {facts['attempts_count']}\n"
+        f"- Hints που έχουν δοθεί: {facts['hint_count']}\n"
+        f"- Χρόνος που αφιέρωσε: {facts['time_spent']:.0f} δευτερόλεπτα\n\n"
+        f"Έργο σου: αξιολόγησε ΟΛΙΣΤΙΚΑ βάσει ΑΠΟΚΛΕΙΣΤΙΚΑ των παραπάνω αντικειμενικών ευρημάτων. "
+        f"ΜΗΝ υποθέσεις προβλήματα που δεν αναφέρονται. Απόφασε:\n"
+        f"1. is_correct: ικανοποιεί ΠΛΗΡΩΣ την εκφώνηση; ΝΑΙ μόνο αν ΟΛΑ τα ευρήματα το επιβεβαιώνουν "
+        f"— μηδενική ανοχή σε type/string mismatch ή strict-match αποτυχία, ακόμα κι αν το score είναι υψηλό.\n"
+        f"2. assessment_decision — ΑΚΡΙΒΩΣ ένα από: advance, repeat, support\n"
+        f"   - advance: μόνο αν is_correct=ΝΑΙ ΚΑΙ ο μαθητής δεν χρειάζεται επιπλέον εξάσκηση (λίγες προσπάθειες/hints)\n"
+        f"   - repeat: χρειάζεται να ξαναδοκιμάσει, χωρίς να είναι ακόμα σε σοβαρή δυσκολία\n"
+        f"   - support: φαίνεται να δυσκολεύεται σοβαρά (πολλές προσπάθειες/hints/χρόνος) και χρειάζεται πιο ενεργή καθοδήγηση\n"
+        f"3. understanding_level — ΑΚΡΙΒΩΣ ένα από: needs_support, developing, good, strong\n"
+        f"4. assessment_feedback: 1-3 προτάσεις τεχνική περιγραφή για χρήση ΩΣ CONTEXT από τον Mentor "
+        f"(ΟΧΙ απευθείας στον μαθητή) — αν is_correct=ΝΑΙ, γράψε \"Όλα τα κριτήρια ικανοποιούνται.\". "
+        f"ΜΗΝ δώσεις τη λύση.\n\n"
+        f"Απάντησε ΑΚΡΙΒΩΣ σε αυτή τη μορφή, τίποτα άλλο πριν ή μετά:\n"
+        f"ΣΩΣΤΟ: ΝΑΙ ή ΟΧΙ\n"
+        f"ΑΠΟΦΑΣΗ: advance ή repeat ή support\n"
+        f"ΚΑΤΑΝΟΗΣΗ: needs_support ή developing ή good ή strong\n"
+        f"FEEDBACK: <το κείμενο feedback>"
+    )
+
+    try:
+        result = llm_assessor.invoke(prompt)
+        content = (result.content or "").strip()
+        match = _LLM_ASSESSMENT_RE.search(content)
+        if not match:
+            raise ValueError("unparseable assessment response")
+
+        correct_raw, decision_raw, level_raw, feedback = (g.strip() for g in match.groups())
+
+        decision = decision_raw.strip().lower()
+        if decision not in _VALID_DECISIONS:
+            # Δεν περνάει ΠΟΤΕ ελεύθερο κείμενο σε αυτό το πεδίο — load-bearing enum αλλού στον κώδικα.
+            raise ValueError(f"invalid assessment_decision: {decision_raw!r}")
+
+        is_correct = correct_raw.strip().upper().startswith(("ΝΑΙ", "NAI", "YES"))
+
+        # Αμετάβλητο ίδιο με το παλιό deterministic σύστημα: "advance" ΠΟΤΕ χωρίς is_correct=True,
+        # "support" ΠΟΤΕ με is_correct=True. Το prompt το ζητά ήδη, αλλά επιβεβαιώθηκε σε live
+        # testing ότι το LLM δεν το τηρεί πάντα (is_correct=False + decision=advance εμφάνισε
+        # ψευδές μήνυμα επιτυχίας στον μαθητή χωρίς αυτός να προχωρήσει πραγματικά). Αντί να
+        # εμπιστευτούμε ένα ασυνεπές ζευγάρι, το αντιμετωπίζουμε σαν αποτυχία parsing.
+        if (decision == "advance" and not is_correct) or (decision == "support" and is_correct):
+            raise ValueError(f"inconsistent is_correct/decision pair: {correct_raw!r} / {decision_raw!r}")
+
+        # Ασφαλιστική δικλείδα: αν ο μαθητής δυσκολεύεται πραγματικά (πολλές προσπάθειες/hints/
+        # χρόνος) αλλά το LLM επέλεξε ξανά 'repeat', αναβαθμίζουμε σε 'support' — βλ.
+        # _needs_support_escalation.
+        if not is_correct and decision == "repeat" and _needs_support_escalation(
+            facts["attempts_count"], facts["hint_count"], facts["time_spent"]
+        ):
+            decision = "support"
+
+        understanding_level = level_raw.strip().lower()
+        if understanding_level not in _VALID_UNDERSTANDING_LEVELS:
+            # Μικρό, φθηνό, πάντα-έγκυρο fallback ΜΟΝΟ για αυτό το πεδίο.
+            understanding_level = _understanding_level(
+                facts["score"], facts["attempts_count"], facts["hint_count"], is_correct
+            )
+
+        if not feedback:
+            feedback = "Όλα τα κριτήρια ικανοποιούνται." if is_correct else _fallback_feedback_text(facts)
+
+        return {
+            "is_correct": is_correct,
+            "assessment_decision": decision,
+            "understanding_level": understanding_level,
+            "assessment_feedback": feedback,
+        }
+    except Exception:
+        return _fallback_assessment(facts)
+
+
+def assessment_node(state):  # Κύρια λογική του Assessment Agent
     debug_report = state.get("debug_report", "")
     student_code = state.get("student_code", "")
     success_criteria = state.get("success_criteria", "Ο κώδικας πρέπει να είναι λειτουργικός.")
     current_lesson = state.get("current_lesson", "Python Basics")
     current_task = state.get("current_task", "")
-    performance_summary = _parse_performance_summary(state.get("performance_summary", "{}"))
     attempts_count = int(state.get("attempts_count", 0) or 0)
     time_spent = float(state.get("time_spent", 0.0) or 0.0)
     hint_count = int(state.get("hint_count", 0) or 0)
 
-    if "[DEBUG: ERROR]" in debug_report or "[DEBUG: EMPTY]" in debug_report or "[DEBUG: RULE_FAIL]" in debug_report:
-        decision = "support" if attempts_count >= 3 or hint_count >= 2 else "repeat"
-        return {
-            "is_correct": False,
-            "assessment_feedback": "Ο κώδικας χρειάζεται διόρθωση βάσει τεχνικού report.",
-            "assessment_score": 0,
-            "assessment_decision": decision,
-            "understanding_level": _understanding_level(0, attempts_count, hint_count, False),
-        }
-
     try:
-        type_mismatch, violating_vars = _type_mismatch_detected(student_code, success_criteria, current_lesson)
-        if type_mismatch:
-            decision = "support" if attempts_count >= 2 or hint_count >= 1 else "repeat"
-            ulevel = _understanding_level(0, attempts_count, hint_count, False)
-            raw = f"Οι μεταβλητές {', '.join(violating_vars)} έχουν αριθμητική τιμή γραμμένη ως string (με εισαγωγικά)."
-            feedback = _generate_assessment_feedback(False, raw, current_task, ulevel)
-            return {
-                "is_correct": False,
-                "assessment_feedback": f"[TYPE_ERROR] {feedback}",
-                "assessment_score": 0,
-                "assessment_decision": decision,
-                "understanding_level": ulevel,
-            }
-
-        # Έλεγχος αντίστροφου τύπου: string-type μεταβλητές που πήραν αριθμητική τιμή
-        # π.χ. email = 12, country = 99  →  σφάλμα τύπου
-        str_mismatch, str_violating = _string_mismatch_detected(student_code, current_lesson)
-        if str_mismatch:
-            decision = "support" if attempts_count >= 2 or hint_count >= 1 else "repeat"
-            ulevel = _understanding_level(0, attempts_count, hint_count, False)
-            raw = f"Οι μεταβλητές {', '.join(str_violating)} πρέπει να έχουν τιμή τύπου string (μέσα σε εισαγωγικά)."
-            feedback = _generate_assessment_feedback(False, raw, current_task, ulevel)
-            return {
-                "is_correct": False,
-                "assessment_feedback": f"[TYPE_ERROR] {feedback}",
-                "assessment_score": 0,
-                "assessment_decision": decision,
-                "understanding_level": ulevel,
-            }
-
-        # Λίστα με ΜΟΝΟ κενά strings → απαράδεκτο (π.χ. scores=['','',''])
-        if "Lists" in current_lesson:
-            try:
-                _ltree = ast.parse(student_code)
-                for _lnode in ast.walk(_ltree):
-                    if isinstance(_lnode, ast.Assign) and isinstance(_lnode.value, ast.List):
-                        _elts = _lnode.value.elts
-                        if _elts and any(
-                            isinstance(e, ast.Constant) and e.value == "" for e in _elts
-                        ):
-                            _ulevel = _understanding_level(0, attempts_count, hint_count, False)
-                            _raw = "Η λίστα περιέχει μόνο κενά strings (''). Τα στοιχεία πρέπει να έχουν πραγματικές τιμές."
-                            return {
-                                "is_correct": False,
-                                "assessment_feedback": f"[EMPTY_LIST] {_generate_assessment_feedback(False, _raw, current_task, _ulevel)}",
-                                "assessment_score": 0,
-                                "assessment_decision": "support" if attempts_count >= 2 else "repeat",
-                                "understanding_level": _ulevel,
-                            }
-            except Exception:
-                pass
-
-        strict_ok, strict_failures = _strict_task_matching(student_code, current_task)
-        if not strict_ok:
-            decision = "support" if attempts_count >= 2 or hint_count >= 1 else "repeat"
-            ulevel = _understanding_level(0, attempts_count, hint_count, False)
-            raw = " | ".join(strict_failures)
-            feedback = _generate_assessment_feedback(False, raw, current_task, ulevel)
-            return {
-                "is_correct": False,
-                "assessment_feedback": f"[STRICT_MATCH_FAIL] {feedback}",
-                "assessment_score": 0,
-                "assessment_decision": decision,
-                "understanding_level": ulevel,
-            }
-
-        flags = _build_flags(student_code)
-        criteria = _normalize_criteria(success_criteria)
-        per_criterion = [(criterion, _criterion_passed(criterion, flags)) for criterion in criteria]
-
-        passed = sum(1 for _, ok in per_criterion if ok)
-        total = len(per_criterion)
-        score = int((passed / total) * 100) if total else 0
-
-        # Απόλυτη ακρίβεια στα criteria: PASS μόνο όταν όλα είναι True.
-        is_correct = (total > 0 and passed == total)
-
-        ulevel = _understanding_level(score, attempts_count, hint_count, is_correct)
-        if is_correct:
-            # Πολλές αποτυχίες/hints → συνιστούμε επιπλέον εξάσκηση πριν προχωρήσουμε
-            if attempts_count >= 4 or hint_count >= 3:
-                decision = "repeat"
-            else:
-                decision = "advance"
-            raw = "Όλα τα κριτήρια ικανοποιούνται πλήρως."
-        else:
-            decision = "support" if attempts_count >= 3 or time_spent > 180 or hint_count >= 2 else "repeat"
-            failed = [criterion for criterion, ok in per_criterion if not ok]
-            raw = "Κριτήρια που δεν ικανοποιήθηκαν: " + "; ".join(failed) if failed else "Απαιτείται επιπλέον εξάσκηση."
-
-        feedback = _generate_assessment_feedback(is_correct, raw, current_task, ulevel)
+        facts = _gather_assessment_facts(
+            debug_report, student_code, success_criteria, current_lesson,
+            current_task, attempts_count, hint_count, time_spent,
+        )
+        result = _reason_about_assessment(facts, current_task)
         return {
-            "is_correct": is_correct,
-            "assessment_feedback": feedback,
-            "assessment_score": score,
-            "assessment_decision": decision,
-            "understanding_level": ulevel,
+            "is_correct": result["is_correct"],
+            "assessment_feedback": result["assessment_feedback"],
+            "assessment_score": facts["score"],  # παραμένει 100% deterministic, ποτέ εικασία του LLM
+            "assessment_decision": result["assessment_decision"],
+            "understanding_level": result["understanding_level"],
         }
     except Exception:
         return {

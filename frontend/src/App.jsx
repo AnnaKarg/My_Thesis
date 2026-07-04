@@ -21,6 +21,8 @@ export default function App() {
   const [historySessions, setHistorySessions] = useState([]);
   const [historyModal, setHistoryModal] = useState(null); // {title, messages}
   const [showProgressModal, setShowProgressModal] = useState(false);
+  const [showLeaveTaskConfirm, setShowLeaveTaskConfirm] = useState(false);
+  const [pendingFreshTaskOnReturn, setPendingFreshTaskOnReturn] = useState(false);
   // Custom tooltip (portal-based, ΟΧΙ position:absolute μέσα στο modal) — το native title ήταν
   // αναξιόπιστο/αργό, και το πρώτο absolute-positioned πείραμα έκοβε πάνω/πλάγια από το modal
   // overflow. Με portal στο document.body + fixed coordinates, ΔΕΝ κόβεται ποτέ από κανένα container.
@@ -142,6 +144,17 @@ export default function App() {
     }
   }, [user, currentView]);
 
+  // Μετά από εγκατάλειψη ενεργής άσκησης (βλ. handleConfirmLeaveTask), ΔΕΝ καθαρίζουμε τη
+  // συζήτηση — μένουμε στην ίδια. Μόλις ο μαθητής ξαναμπεί στο κεφάλαιο, ζητάμε μόνοι μας μια
+  // καινούρια άσκηση (ίδιο μηχανισμό με "θέλω άλλη άσκηση") και προστίθεται σαν συνέχεια της
+  // ίδιας συνομιλίας, όχι σαν νέο ξεκίνημα.
+  useEffect(() => {
+    if (user && currentView === 'mentor' && pendingFreshTaskOnReturn) {
+      setPendingFreshTaskOnReturn(false);
+      requestFreshTaskAfterAbandon();
+    }
+  }, [user, currentView, pendingFreshTaskOnReturn]);
+
   // Η "Η πρόοδός μου" ενότητα ζωντανεύει ξανά κάθε φορά που δείχνουμε την αρχική σελίδα —
   // ανεξάρτητα από το αν έχει ανοίξει ποτέ η συζήτηση. Χωρίς αυτό, το mastery_profile έμενε
   // παγωμένο στην τιμή της πρώτης φοράς που μπήκε στη συζήτηση (ή έλειπε εντελώς αν δεν είχε
@@ -221,6 +234,60 @@ export default function App() {
 
   const handleEnterMentor = () => {
     setCurrentView('mentor');
+  };
+
+  const handleGoHomeClick = () => {
+    if (taskActive) {
+      setShowLeaveTaskConfirm(true);
+      return;
+    }
+    setCurrentView('landing');
+  };
+
+  const handleConfirmLeaveTask = async () => {
+    setShowLeaveTaskConfirm(false);
+    if (user?.id) {
+      try {
+        await axios.post(`${API_BASE}/session/${user.id}/abandon_task`);
+      } catch (err) {
+        // Δεν μπλοκάρουμε την πλοήγηση αν αποτύχει το καθάρισμα στο backend — στη χειρότερη
+        // περίπτωση η άσκηση θα ξαναχρησιμοποιηθεί την επόμενη φορά, όπως συμβαίνει ήδη σήμερα.
+      }
+    }
+    setShowEditor(false);
+    setEditorEnabled(false);
+    setTaskJustCompleted(false);
+    setStartTime(null);
+    setTaskActive(false);
+    setHintStage(0);
+    setLastActivityTime(null);
+    setPendingFreshTaskOnReturn(true);
+    setCurrentView('landing');
+  };
+
+  // Καλείται μόνο του (χωρίς ορατό μήνυμα μαθητή) όταν ο μαθητής ξαναμπαίνει στο κεφάλαιο μετά
+  // από εγκατάλειψη άσκησης — ζητά νέα παραλλαγή στο ΙΔΙΟ κεφάλαιο (ίδιος μηχανισμός με "θέλω
+  // άλλη άσκηση") και προσθέτει μόνο την απάντηση του Mentor στη συζήτηση, χωρίς να τη σβήσει.
+  const requestFreshTaskAfterAbandon = async () => {
+    if (!user?.id) return;
+    loadingRef.current = true;
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API_BASE}/chat/${user.id}`, {
+        message: "",
+        code: "",
+        time_spent: 0,
+        task_started: false,
+        event_type: 'same_chapter_practice',
+        session_id: currentSessionId,
+      });
+      setMessages(prev => [...prev, { role: 'ai', content: res.data.mentor_response }]);
+    } catch (err) {
+      // Αν αποτύχει, ο μαθητής μπορεί απλά να ζητήσει άσκηση κανονικά μέσω chat.
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
+    }
   };
 
   const handleStartTask = () => {
@@ -631,6 +698,34 @@ export default function App() {
         </div>
       )}
 
+      {/* ── Leave Active Task Confirm ────────────────────────────────────── */}
+      {showLeaveTaskConfirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+          onClick={() => setShowLeaveTaskConfirm(false)}>
+          <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '420px', border: '1px solid #3a3a3a', padding: '24px' }}
+            onClick={e => e.stopPropagation()}>
+            <strong style={{ color: '#eee', fontSize: '1rem', display: 'block', marginBottom: '10px' }}>Έχεις ενεργή άσκηση</strong>
+            <p style={{ color: '#aaa', fontSize: '0.9rem', lineHeight: '1.5', margin: '0 0 22px' }}>
+              Αν πας στην αρχική σελίδα, η άσκηση θα σταματήσει και θα πρέπει να την ξεκινήσεις από την αρχή. Θέλεις να συνεχίσεις;
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowLeaveTaskConfirm(false)}
+                style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#ccc', cursor: 'pointer', padding: '8px 16px', fontSize: '0.88rem' }}
+              >
+                Παραμονή στην άσκηση
+              </button>
+              <button
+                onClick={handleConfirmLeaveTask}
+                style={{ background: '#c0392b', border: 'none', borderRadius: '8px', color: 'white', cursor: 'pointer', padding: '8px 16px', fontSize: '0.88rem', fontWeight: 600 }}
+              >
+                Ναι, πήγαινε στην αρχική
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── History Sidebar ──────────────────────────────────────────────── */}
       {showHistorySidebar && !isMobile && (
         <div style={{ width: '210px', flexShrink: 0, background: '#1a1a1a', borderRight: '1px solid #2a2a2a', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -687,7 +782,7 @@ export default function App() {
                   Ιστορικό
                 </button>
                 <button
-                  onClick={() => setCurrentView('landing')}
+                  onClick={handleGoHomeClick}
                   style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#888', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
                 >
                   Αρχική

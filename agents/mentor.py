@@ -438,28 +438,26 @@ def _generate_hint_with_llm(
     avg_hints_per_task: float = 0.0,
     hint_count: int = 0,
 ) -> str:
-    """Hint generator με δύο στρατηγικές:
-    - Δομικά λάθη (syntax, undefined_name κλπ): deterministic hint (ακριβές, χωρίς hallucinations).
-    - Assessment failures (σωστός κώδικας που δεν πληροί κριτήρια): LLM grounded στην εκφώνηση.
+    """Hint generator: ο Mentor μιλάει ΜΟΝΟ με τον Assessor — ο Debugger μιλάει με τον Assessor,
+    όχι απευθείας με τον Mentor. Ο Assessor έχει ήδη λάβει το debug_report ως είσοδο και το
+    ενσωμάτωσε στο δικό του assessment_feedback· αν ο Mentor διάβαζε ΚΑΙ τα δύο θα διπλασίαζε
+    την ίδια πληροφορία (ή θα ρίσκαρε ασυνέπεια αν κάποτε διαφωνήσουν) — μία πηγή αλήθειας ανά
+    επίπεδο.
+
+    Μοναδική εξαίρεση: γνήσιο συντακτικό λάθος ([DEBUG: ERROR], από τον ίδιο τον Python parser
+    μέσω ast.parse — όχι κρίση LLM) μένει σε deterministic hint, χωρίς ανάγκη LLM ερμηνείας.
+    Όλες οι άλλες κατηγορίες (δομικές ή σημασιολογικές, όπως τις κατηγοριοποίησε ο Debugger)
+    περνάνε από ΕΝΑ ενιαίο LLM path που μεταφράζει το assessment_feedback σε παιδαγωγικό hint
+    χωρίς να αποκαλύπτει τη λύση.
     Αν frequent_errors δοθεί, ο LLM λαμβάνει ως context τα συνήθη λάθη του μαθητή.
     """
     report = debug_report or ""
-    has_structural_error = any(tag in report for tag in [
-        "[DEBUG: ERROR]", "undefined_name", "type_mismatch",
-        "missing_if", "missing_for", "missing_function",
-        "missing_append", "missing_list", "missing_output",
-        "missing_index", "print_as_variable",
-        "missing_call", "method_error", "missing_accumulator", "literal_param_error",
-        "print_func_ref", "wrong_arg_count", "wrong_list_type", "empty_print",
-    ])
-    if has_structural_error:
-        # Deterministic για syntax/δομικά λάθη — αποφεύγει hallucinations
+    if "[DEBUG: ERROR]" in report:
+        # Γνήσιο συντακτικό λάθος — ο parser δεν χρειάζεται ερμηνεία από LLM
         return _generate_targeted_hint(debug_report, difficulty, assessment_feedback, hint_count)
 
-    # LLM για assessment-level failures (grounded στην εκφώνηση + semantic analysis)
+    # LLM που μεταφράζει την κρίση του Assessor σε hint — grounded ΑΠΟΚΛΕΙΣΤΙΚΑ σε αυτήν
     clean_fb = _clean_feedback(assessment_feedback)
-    # Αν ο Debugger βρήκε semantic πρόβλημα, το συμπεριλαμβάνουμε ως επιπλέον πλαίσιο
-    semantic_context = report.replace("[DEBUG: SEMANTIC]", "").strip() if "[DEBUG: SEMANTIC]" in report else ""
     # Συχνά λάθη μαθητή ως επιπλέον context για πιο στοχευμένο hint
     frequent_ctx = ""
     if frequent_errors:
@@ -491,13 +489,12 @@ def _generate_hint_with_llm(
         f"αλλά δεν ικανοποιεί τα κριτήρια της άσκησης.\n\n"
         f"Εκφώνηση: {current_task}\n"
         f"Αξιολόγηση Assessor: {clean_fb}\n"
-        + (f"Σημασιολογική ανάλυση Debugger: {semantic_context}\n" if semantic_context else "")
         + frequent_ctx
         + escalation_note
         + style_note
         + f"Επίπεδο κατανόησης μαθητή: {understanding_level}\n\n"
         f"Δώσε ΕΝΑ hint (1-2 προτάσεις) που να οδηγεί στη σωστή κατεύθυνση.\n"
-        f"ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: Βασίσου ΑΠΟΚΛΕΙΣΤΙΚΑ στην 'Αξιολόγηση Assessor' και στη 'Σημασιολογική ανάλυση'.\n"
+        f"ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: Βασίσου ΑΠΟΚΛΕΙΣΤΙΚΑ στην 'Αξιολόγηση Assessor'.\n"
         f"ΜΗΝ υποθέσεις πρόσθετα προβλήματα που δεν αναφέρονται εκεί.\n"
         f"ΜΗΝ δώσεις τη λύση. ΜΗΝ γράψεις κώδικα.\n"
         f"Απευθύνσου ΠΑΝΤΑ στον μαθητή σε β' ενικό (π.χ. 'πρόσεξε', 'δες', 'δοκίμασε', 'κοίτα') — ΜΗΝ μιλάς για τον μαθητή σε τρίτο πρόσωπο.\n\nHint:"
@@ -954,8 +951,7 @@ def _targeted_hint_text(debug_report: str, difficulty: str, assessment_feedback:
     if "missing_accumulator" in report:
         return (
             "Χρειάζεσαι έναν αθροιστή — μια μεταβλητή που ξεκινά από 0 "
-            "και αυξάνεται σε κάθε επανάληψη με `+=`. "
-            "Επίσης, κάνε loop πάνω στη λίστα, όχι σε range()."
+            "και αυξάνεται σε κάθε επανάληψη με `+=`."
         )
 
     if "print_func_ref" in report:

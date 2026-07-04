@@ -31,7 +31,6 @@ with open(LESSONS_PATH, "r", encoding="utf-8") as f:
     lessons_content = json.load(f)
 
 TOTAL_LESSONS = len(lessons_content.get("lessons", []))
-MIN_PASS_SCORE = 80
 
 # Ενιαία λίστα τίτλων μαθημάτων — αντλείται απευθείας από το lessons.json
 # Αποφεύγουμε δύο ανεξάρτητες hardcoded λίστες που μπορούν να αποσυγχρονιστούν.
@@ -396,6 +395,22 @@ async def session_progress(user_id: int, db: AsyncSession = Depends(get_db)):
         "mastery_profile": _compute_mastery_profile(user, db_history, struggle_flags, cohort_pct),
     }
 
+@router.post("/session/{user_id}/abandon_task")
+# Καλείται όταν ο μαθητής επιβεβαιώνει ότι θέλει να εγκαταλείψει την τρέχουσα ενεργή άσκηση
+# (π.χ. πατώντας "Αρχική" ενώ έχει άλυτη άσκηση) — καθαρίζει active_task_* ώστε η επόμενη
+# φορά που θα ζητήσει άσκηση σε αυτό το κεφάλαιο να πάρει ΝΕΑ παραλλαγή αντί να συνεχίσει
+# την ίδια. Χωρίς LLM call/ChatHistory εγγραφή — καθαρή μεταβολή κατάστασης.
+async def abandon_active_task(user_id: int, db: AsyncSession = Depends(get_db)):
+    user_result = await db.execute(select(User).filter(User.id == user_id))
+    user = user_result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Ο χρήστης δεν βρέθηκε")
+
+    user.active_task_lesson_id = 0
+    user.active_task_text = ""
+    await db.commit()
+    return {"message": "Η άσκηση εγκαταλείφθηκε."}
+
 @router.get("/session/{user_id}/welcome") # Endpoint για να πάρει το μήνυμα καλωσορίσματος και την τρέχουσα κατάσταση του χρήστη όταν ξεκινάει μια νέα συνεδρία
 async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     user_result = await db.execute(select(User).filter(User.id == user_id))
@@ -745,11 +760,24 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         # Στο DB αποθηκεύουμε raw_response ώστε να λειτουργούν σωστά τα
         # _infer_awaiting_questions (ψάχνει [AWAITING_QUESTIONS]) και _count_hints (ψάχνει [HINT]).
         ai_response = re.sub(r'\n?\[(HINT|AWAITING_QUESTIONS)\]', '', raw_response).strip()
+        if not ai_response:
+            # Ασφαλιστική δικλείδα: σπάνια το LLM επιστρέφει επιτυχώς αλλά με κενό/μόνο-foreign-
+            # script περιεχόμενο (π.χ. _strip_foreign_scripts αφαιρεί τα πάντα) — χωρίς αυτό ο
+            # μαθητής έβλεπε ένα εντελώς κενό μήνυμα, χωρίς κανένα σφάλμα να εμφανιστεί.
+            ai_response = "Συγγνώμη, κάτι πήγε στραβά με την απάντησή μου. Μπορείς να ξαναγράψεις ή να δοκιμάσεις ξανά;"
+            raw_response = ai_response
         assessment_score = int(output.get("assessment_score", 0) or 0)
         assessment_decision = output.get("assessment_decision", "repeat")
         understanding_level = output.get("understanding_level", "developing")
         debug_report_output = output.get("debug_report", "")
-        is_correct_final = bool(output.get("is_correct", False)) and assessment_score >= MIN_PASS_SCORE and assessment_decision == "advance"
+        # ΠΡΟΣΟΧΗ: όχι πλέον "and assessment_score >= MIN_PASS_SCORE" — το score υπολογίζεται
+        # ανεξάρτητα (καθαρά keyword-matching κριτηρίων) από το is_correct/decision του LLM
+        # assessor, το οποίο είναι πλέον η έγκυρη ολιστική κρίση (βλ. invariant check στο
+        # agents/assessor.py::_reason_about_assessment). Το παλιό score-gate ήταν αβλαβές όσο
+        # is_correct και score υπολογίζονταν από την ΙΔΙΑ deterministic φόρμουλα (πάντα score=100
+        # όταν is_correct=True) — τώρα που αποσυνδέθηκαν, λειτουργούσε ως ψευδές veto: ο μαθητής
+        # έβλεπε "συγχαρητήρια, προχώρησες" ενώ το current_lesson_id ΔΕΝ προχωρούσε πραγματικά.
+        is_correct_final = bool(output.get("is_correct", False)) and assessment_decision == "advance"
 
     except Exception:
         if effective_event_type == "no_submission_timeout":
@@ -859,7 +887,8 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
 
     # code_was_correct: True όταν ο κώδικας ήταν σωστός (ακόμα κι αν decision="repeat").
     # Χρησιμοποιείται από το frontend για να κλειδώσει τον editor μόλις η άσκηση λυθεί.
-    code_was_correct = bool(output.get("is_correct", False)) and assessment_score >= MIN_PASS_SCORE
+    # Όχι πλέον gated από assessment_score (βλ. σχόλιο στο is_correct_final παραπάνω).
+    code_was_correct = bool(output.get("is_correct", False))
 
     await db.commit()
     return {
