@@ -41,7 +41,7 @@
 |---|---|
 | Backend | FastAPI, Python 3.13 |
 | Agents / Orchestration | LangGraph, LangChain |
-| LLM | Groq — `meta-llama/llama-4-scout-17b-16e-instruct` |
+| LLM | Groq — `llama-3.3-70b-versatile` (+ `llama-3.1-8b-instant` για ταξινόμηση πρόθεσης) |
 | Βάση δεδομένων | SQLite (τοπικά, async μέσω aiosqlite) / PostgreSQL (production) |
 | Frontend | React 19, Vite, Monaco Editor |
 | Observability | LangSmith |

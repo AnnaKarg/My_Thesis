@@ -12,7 +12,7 @@ ASSESSOR_SYSTEM_PROMPT = (
     "Μηδενική ανοχή σε νοηματικά λάθη τύπων δεδομένων. Το περιεχόμενο χωρίς τη σωστή μορφή θεωρείται λανθασμένο"
 )
 
-llm_assessor = ChatGroq(model_name="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0.1)
+llm_assessor = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0.1)
 
 NUMERIC_TARGET_NAMES = {
     "age", "score", "year", "num_var", "n1", "n2", "num", "limit",

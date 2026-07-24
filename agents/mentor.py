@@ -10,7 +10,9 @@ from dotenv import load_dotenv # Για φόρτωση περιβαλλοντι�
 load_dotenv() # Φορτώνει τις περιβαλλοντικές μεταβλητές από το .env αρχείο (π.χ. API keys)
 
 llm = ChatGroq( # Αρχικοποιεί το LLM για παραγωγή απαντήσεων
-    model_name="meta-llama/llama-4-scout-17b-16e-instruct",
+    # meta-llama/llama-4-scout-17b-16e-instruct καταργήθηκε από τη Groq (404 model_not_found) —
+    # ΚΑΘΕ κλήση εδώ απέτυχε σιωπηλά για άγνωστο διάστημα, πέφτοντας σε generic fallback κείμενο.
+    model_name="llama-3.3-70b-versatile",
     temperature=0.1 # Χαμηλή θερμοκρασία για πιο συνεπείς απαντήσεις
 )
 
@@ -280,6 +282,30 @@ def _classify_intent(user_input: str, profile_checked: bool, task_started: bool)
         if _starts_with_no and _has_understood and not _has_negation:
             return "wants_task"
 
+        # "Νομίζω όχι" / "όχι, νομίζω" (σύντομη απάντηση) σε "έχεις απορία;" σημαίνει
+        # "νομίζω δεν έχω [απορία]" = wants_task. Επιβεβαιωμένο με επανάληψη ότι το μικρό
+        # classify-LLM το ταξινομεί ασυνεπώς (άλλοτε "other", άλλοτε "theory_question") παρόλο
+        # το ρητό παράδειγμα στο prompt παρακάτω — βγαίνει deterministic εκτός LLM.
+        _has_nomizo = "νομιζ" in _lower_stripped or "νομίζ" in _lower_stripped
+        _has_oxi = "οχι" in _lower_stripped or "όχι" in _lower_stripped
+        _is_short_msg = len(stripped.split()) <= 4
+        _has_strong_negation = any(
+            p in _lower_stripped for p in ["δεν θελω", "δεν θέλω", "δεν νιωθω", "δεν νιώθω"]
+        )
+        if _has_nomizo and _has_oxi and _is_short_msg and not _has_strong_negation:
+            return "wants_task"
+
+        # Ρητό αίτημα άσκησης νικάει οποιοδήποτε αρνητικό-ηχούν πρόθεμα.
+        # Παρατηρήθηκε: "Οχι, δωσε ασκηση" ταξινομήθηκε ως "other" (redirect πίσω στη θεωρία) —
+        # το μικρό classify-LLM υπερβαρύνει το "οχι" και αγνοεί το ρητό αίτημα που ακολουθεί.
+        # Αν ο μαθητής ονομάζει ρητά τι θέλει, δίνουμε αυτό — όχι κάτι άλλο.
+        _explicit_task_request = any(
+            p in _lower_stripped for p in
+            ["δωσε ασκηση", "δώσε άσκηση", "δωσε μου ασκηση", "δώσε μου άσκηση", "θελω ασκηση", "θέλω άσκηση"]
+        )
+        if _explicit_task_request:
+            return "wants_task"
+
     # Ρητό αίτημα βοήθειας ενώ δουλεύει σε άσκηση = πάντα code_help, ΟΧΙ "other".
     # Παρατηρήθηκε: "Δεν ξερω πως να το κανω θελω βοηθεια" ταξινομήθηκε ως "other" (ασαφές)
     # από το μικρό LLM, πυροδοτώντας γενική διευκρινιστική ερώτηση αντί για βοήθεια —
@@ -440,9 +466,24 @@ def _answer_theory_question(user_input: str, lesson_title: str, theory: str, ton
         result = llm.invoke(prompt_text)
         return _strip_thinking(result.content) + visual_part
     except Exception:
+        # Honest fallback: ΜΗΝ προσποιηθείς ότι απάντησες στη συγκεκριμένη ερώτηση — αν ο μαθητής
+        # μόλις είπε "δεν καταλαβα" (χωρίς να πει ΤΙ), το να ξαναδείξεις αυτολεξεί την ΙΔΙΑ θεωρία
+        # που μόλις δεν κατάλαβε είναι το χειρότερο δυνατό σήμα "δεν σε άκουσα". Ζήτα διευκρίνιση.
+        _msg_lower = (user_input or "").lower()
+        _is_short_msg = len((user_input or "").strip().split()) <= 5
+        _bare_confusion = _is_short_msg and any(
+            w in _msg_lower for w in ["δεν καταλαβ", "δεν κατάλαβ", "δεν εννοησ", "δεν εννόησ", "δεν το πιανω", "δεν το πιάνω"]
+        )
+        if _bare_confusion:
+            return (
+                "Συγγνώμη, δεν πρόλαβα να δω τι ακριβώς σε μπέρδεψε — πες μου συγκεκριμένα ποιο "
+                "κομμάτι δεν βγάζει νόημα (μια λέξη, μια γραμμή κώδικα) και θα το εξηγήσω αλλιώς!"
+                + visual_part
+            )
         return (
-            f"Καλή ερώτηση! Ας ξαναδούμε τη θεωρία:\n\n{theory}\n\n"
-            "Αν κάτι εξακολουθεί να είναι ασαφές, ρώτα πιο συγκεκριμένα!"
+            f"Συγγνώμη, δεν πρόλαβα να επεξεργαστώ καλά την ερώτησή σου — να ξαναδούμε τη θεωρία, "
+            f"μήπως βοηθήσει:\n\n{theory}\n\n"
+            "Πες μου ελεύθερα ποιο σημείο θες να διευκρινίσουμε!"
             + visual_part
         )
 
@@ -593,6 +634,7 @@ def _generate_mentor_response(
     tone: str = "φιλικά",
     must_not: str = "",
     brief: bool = False,
+    fallback: str = "Εντάξει, ας συνεχίσουμε.",
 ) -> str:
     """Παράγει ελεύθερη, φυσική απάντηση Mentor — ο LLM σκέφτεται μόνος του.
 
@@ -601,10 +643,14 @@ def _generate_mentor_response(
     - indicative: ενδεικτική φράση ως πρόταση, ΟΧΙ υποχρεωτικό template
     - must_not: τι να αποφύγει ρητά
     - brief=True: 1-2 προτάσεις μόνο (για intros πριν από theory/task)
+    - fallback: το κείμενο ασφαλείας αν αποτύχει το LLM· default ταιριάζει σε intro/continuation
+      contexts. Call sites όπου η έξοδος λειτουργεί ως ΚΛΕΙΣΙΜΟ/ερώτηση (π.χ. "έχεις απορίες;"
+      μετά τη θεωρία) πρέπει να περνάνε δικό τους fallback — το generic default εκεί δείχνει σαν
+      να αγνόησε ο mentor το context (ακριβώς η ασυνέπεια που παρατηρήθηκε).
 
-    Αν αποτύχει το LLM (timeout/rate-limit/δίκτυο), επιστρέφει ασφαλές γενικό fallback αντί για
-    κενό string — μερικά call sites χρησιμοποιούν την έξοδο ως ΟΛΟΚΛΗΡΟ το μήνυμα (όχι μόνο ως
-    intro πριν από άλλο περιεχόμενο), οπότε κενό string θα άφηνε τον μαθητή χωρίς καμία απάντηση.
+    Αν αποτύχει το LLM (timeout/rate-limit/δίκτυο), επιστρέφει το fallback αντί για κενό string —
+    μερικά call sites χρησιμοποιούν την έξοδο ως ΟΛΟΚΛΗΡΟ το μήνυμα (όχι μόνο ως intro πριν από
+    άλλο περιεχόμενο), οπότε κενό string θα άφηνε τον μαθητή χωρίς καμία απάντηση.
     """
     indicative_part = f"\nΕνδεικτικά (ΟΧΙ αυτολεξεί): {indicative}" if indicative else ""
     must_not_part = f"\nΑπόφυγε: {must_not}" if must_not else ""
@@ -625,9 +671,9 @@ def _generate_mentor_response(
         result = llm.invoke(prompt_text)
         cleaned = _strip_thinking(result.content)
         cleaned = _enforce_brief(cleaned) if brief else cleaned
-        return cleaned if cleaned else "Εντάξει, ας συνεχίσουμε."
+        return cleaned if cleaned else fallback
     except Exception:
-        return "Εντάξει, ας συνεχίσουμε."
+        return fallback
 
 _INTRO_OUTRO_RE = re.compile(r"ΕΙΣΑΓΩΓΗ\s*:\s*(.*?)\s*ΚΛΕΙΣΙΜΟ\s*:\s*(.*)", re.DOTALL | re.IGNORECASE)
 
@@ -1573,7 +1619,8 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 indicative="π.χ. 'Ρώτα ό,τι δεν είναι ξεκάθαρο!' ή 'Πιο κατανοητό;'",
                 tone="φιλικά",
                 brief=True,
-                must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
+                must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
+                fallback="Έχεις καμιά απορία πάνω σε αυτά;"
             )
             deterministic_content = f"{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
         elif intent == "code_help" and task_started and debug_report and "[DEBUG: EMPTY]" not in debug_report:
@@ -1724,7 +1771,8 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 indicative="π.χ. 'Έχεις κάποια απορία; Ή πάμε σε άσκηση;'",
                 tone="φιλικά" if difficulty == "easy" else "ενθαρρυντικά",
                 brief=True,
-                must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
+                must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
+                fallback="Έχεις καμιά απορία; Ή πάμε σε άσκηση;"
             )
             deterministic_content = f"{outro}\n[AWAITING_QUESTIONS]"
     elif task_started and not is_correct:
@@ -1757,7 +1805,8 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 indicative="π.χ. 'Έχεις ερωτήσεις; Αν είσαι έτοιμος, πες μου!'",
                 tone="φιλικά",
                 brief=True,
-                must_not="επαναλάβεις ή επεκτείνεις τη θεωρία"
+                must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
+                fallback="Έχεις καμιά απορία; Αν είσαι έτοιμος/η, πες μου!"
             )
             deterministic_content = f"{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
 
@@ -1824,9 +1873,9 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
         }
     except Exception:
         fallback_content = (
-            f"Καλή ερώτηση! Ας ξαναδούμε τη θεωρία μαζί:\n\n"
-            f"{theory}\n\n"
-            f"Αν κάτι εξακολουθεί να μην είναι ξεκάθαρο, ρώτα πιο συγκεκριμένα!"
+            f"Συγγνώμη, δεν πρόλαβα να επεξεργαστώ καλά την ερώτησή σου — να ξαναδούμε τη θεωρία, "
+            f"μήπως βοηθήσει:\n\n{theory}\n\n"
+            f"Πες μου ελεύθερα ποιο σημείο θες να διευκρινίσουμε!"
         )
         return {
             "messages": [AIMessage(content=fallback_content)],

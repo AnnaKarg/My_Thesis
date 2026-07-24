@@ -14,7 +14,7 @@ DEBUGGER_SYSTEM_PROMPT = (
     "(ποτέ σε υποθέσεις), αν υπάρχει πρόβλημα στον κώδικα και ποιο είναι."
 )
 
-llm_debugger = ChatGroq(model_name="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0)
+llm_debugger = ChatGroq(model_name="llama-3.3-70b-versatile", temperature=0)
 
 def _criteria_text(success_criteria) -> str:
     if isinstance(success_criteria, list):
