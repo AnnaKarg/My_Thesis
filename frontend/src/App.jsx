@@ -42,7 +42,6 @@ export default function App() {
   const [practiceError, setPracticeError] = useState('');
   const [practiceStreakCurrent, setPracticeStreakCurrent] = useState(0);
   const [practiceStreakGoal, setPracticeStreakGoal] = useState(0);
-  const [practiceGoalInput, setPracticeGoalInput] = useState('');
   // Custom tooltip (portal-based, ΟΧΙ position:absolute μέσα στο modal) — το native title ήταν
   // αναξιόπιστο/αργό, και το πρώτο absolute-positioned πείραμα έκοβε πάνω/πλάγια από το modal
   // overflow. Με portal στο document.body + fixed coordinates, ΔΕΝ κόβεται ποτέ από κανένα container.
@@ -317,7 +316,6 @@ export default function App() {
     setPracticeResponse(null);
     setPracticeIsCorrect(null);
     setPracticeError('');
-    setPracticeGoalInput('');
     setCurrentView('practice');
   };
 
@@ -367,16 +365,6 @@ export default function App() {
     } finally {
       setPracticeLoading(false);
     }
-  };
-
-  const handleSetPracticeGoal = async () => {
-    const goal = parseInt(practiceGoalInput, 10);
-    if (!user?.id || isNaN(goal) || goal < 0) return;
-    try {
-      const res = await axios.post(`${API_BASE}/practice/${user.id}/set_goal`, { goal });
-      setPracticeStreakGoal(res.data.practice_streak_goal);
-      setPracticeGoalInput('');
-    } catch (err) { /* ignore */ }
   };
 
   const handleGoHomeFromPractice = () => {
@@ -728,7 +716,7 @@ export default function App() {
               <Zap size={52} color="var(--accent)" style={{ marginBottom: '18px' }} />
               <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem' }}>Εξάσκηση</h3>
               <p style={{ color: '#888', fontSize: '0.88rem', margin: 0, lineHeight: '1.55' }}>
-                Προσαρμοστικές ασκήσεις βάσει των αναγκών σου
+                Επαναληπτικές ασκήσεις για καλύτερη κατανόηση
               </p>
             </div>
 
@@ -947,8 +935,6 @@ export default function App() {
 
   if (currentView === 'practice') {
     const completedLessons = masteryProfile.filter(l => l.mastery === 100);
-    const goalReached = practiceStreakGoal > 0 && practiceStreakCurrent >= practiceStreakGoal;
-
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-body)' }}>
         <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2a2a2a', flexShrink: 0 }}>
@@ -994,27 +980,11 @@ export default function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <div style={{ width: '100%', maxWidth: '680px' }}>
 
-              {/* Streak */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#1e1e1e', border: '1px solid #333', borderRadius: '12px', padding: '14px 18px', marginBottom: '20px' }}>
-                <div>
-                  <span style={{ fontSize: '1.1rem', fontWeight: 700, color: goalReached ? 'var(--accent)' : '#eee' }}>
-                    Σερί: {practiceStreakCurrent}{practiceStreakGoal > 0 ? ` / ${practiceStreakGoal}` : ''}
-                  </span>
-                  {goalReached && <span style={{ marginLeft: '10px', color: 'var(--accent)', fontSize: '0.85rem' }}>Πέτυχες τον στόχο σου!</span>}
-                </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input
-                    type="number"
-                    min="0"
-                    value={practiceGoalInput}
-                    onChange={e => setPracticeGoalInput(e.target.value)}
-                    placeholder="Στόχος"
-                    style={{ width: '70px', background: '#161616', border: '1px solid #333', borderRadius: '8px', color: 'white', padding: '7px 8px', fontSize: '0.85rem' }}
-                  />
-                  <button onClick={handleSetPracticeGoal} style={{ background: '#2a2a2a', border: 'none', borderRadius: '8px', color: '#ccc', padding: '7px 12px', fontSize: '0.8rem', cursor: 'pointer' }}>
-                    Ορισμός
-                  </button>
-                </div>
+              {/* Streak — απλή μέτρηση, χωρίς προσωπικό στόχο προς το παρόν */}
+              <div style={{ display: 'flex', alignItems: 'center', background: '#1e1e1e', border: '1px solid #333', borderRadius: '12px', padding: '14px 18px', marginBottom: '20px' }}>
+                <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#eee' }}>
+                  Σερί: {practiceStreakCurrent}
+                </span>
               </div>
 
               {!practiceCurrentTask && (
@@ -1048,22 +1018,22 @@ export default function App() {
                       defaultLanguage="python"
                       value={practiceCode}
                       onChange={(value) => setPracticeCode(value ?? '')}
-                      options={{ fontSize: 15, quickSuggestions: false, suggestOnTriggerCharacters: false, acceptSuggestionOnEnter: 'off' }}
+                      options={{ fontSize: 15, quickSuggestions: false, suggestOnTriggerCharacters: false, acceptSuggestionOnEnter: 'off', readOnly: practiceIsCorrect === true }}
                     />
                   </div>
 
                   <div style={{ display: 'flex', gap: '10px' }}>
                     <button
                       onClick={handlePracticeSubmit}
-                      disabled={!practiceCode.trim() || practiceLoading}
+                      disabled={!practiceCode.trim() || practiceLoading || practiceIsCorrect === true}
                       style={{
                         flex: 1, padding: '13px', borderRadius: '10px', border: 'none', fontWeight: 700, fontSize: '0.95rem',
-                        cursor: (!practiceCode.trim() || practiceLoading) ? 'not-allowed' : 'pointer',
-                        background: (!practiceCode.trim() || practiceLoading) ? '#2a2a2a' : 'var(--accent)',
-                        color: (!practiceCode.trim() || practiceLoading) ? '#666' : '#0d1f0f',
+                        cursor: (!practiceCode.trim() || practiceLoading || practiceIsCorrect === true) ? 'not-allowed' : 'pointer',
+                        background: (!practiceCode.trim() || practiceLoading || practiceIsCorrect === true) ? '#2a2a2a' : 'var(--accent)',
+                        color: (!practiceCode.trim() || practiceLoading || practiceIsCorrect === true) ? '#666' : '#0d1f0f',
                       }}
                     >
-                      {practiceLoading ? 'Έλεγχος...' : 'Έλεγχος'}
+                      {practiceLoading ? 'Έλεγχος...' : practiceIsCorrect === true ? 'Σωστό!' : 'Έλεγχος'}
                     </button>
                     <button
                       onClick={handleFetchPracticeTask}

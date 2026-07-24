@@ -67,11 +67,7 @@ def _sanitize_history(text: str) -> str:
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-def _is_code_submission_message(content: str) -> bool: # Ελέγχει αν το μήνυμα υποδηλώνει υποβολή κώδικα
-    normalized = (content or "").strip().upper()
-    return normalized == "CODE_SUBMISSION" or "```" in (content or "")
-
-def _format_submission_message(code: str) -> str: # Μορφοποιεί το μήνυμα υποβολής κώδικα 
+def _format_submission_message(code: str) -> str: # Μορφοποιεί το μήνυμα υποβολής κώδικα
     cleaned_code = code.strip()
     if not cleaned_code:
         return "Υποβολή κώδικα"
@@ -88,13 +84,12 @@ def _build_welcome_message(username: str, db_history, current_lesson_id: int) ->
     idx = max(0, min(current_lesson_id - 1, len(_LESSON_TITLES_DISPLAY) - 1))
     lesson_name = _LESSON_TITLES_DISPLAY[idx]
 
-    recent_human = [h.content for h in db_history if h.role == "human" and not _is_code_submission_message(h.content) and not (h.content or "").startswith("__NO_SUBMISSION_TIMEOUT__")]
-    last_user_topic = recent_human[-1] if recent_human else "στην εισαγωγή μας"
-    
+    # Deterministic fallback ΜΟΝΟ όταν το LLM recap (generate_session_recap_async) αποτύχει/timeout —
+    # ΜΗΝ παραθέτεις αυτολεξεί το τελευταίο μήνυμα του μαθητή (π.χ. ένα άκυρο "οκει..."), δείχνει σαν
+    # να μην έχει διαβάσει κανείς τη συζήτηση. Απλή, ειλικρινής φράση χωρίς προσποίηση ανάκλησης.
     return (
-        f"Καλώς ήρθες ξανά {username}! Την προηγούμενη φορά μείναμε στο μάθημα '{lesson_name}'. "
-        f"Θυμάμαι που είπαμε για: '{last_user_topic[:50]}...'. "
-        "Έχεις κάποια απορία σε αυτά που είδαμε ή θέλεις να προχωρήσουμε;"
+        f"Καλώς ήρθες ξανά {username}! Την προηγούμενη φορά δουλέψαμε πάνω στο μάθημα '{lesson_name}'. "
+        "Θέλεις να συνεχίσουμε απευθείας ή να ξαναδούμε πρώτα τη θεωρία;"
     )
 
 def _infer_awaiting_questions(db_history, profile_checked: bool, task_started: bool) -> bool:
