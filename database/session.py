@@ -84,6 +84,23 @@ async def init_db():
                 "ALTER TABLE chat_histories ADD COLUMN IF NOT EXISTS session_id INTEGER DEFAULT 0",
                 "ALTER TABLE chat_histories ADD COLUMN IF NOT EXISTS created_at TEXT DEFAULT ''",
                 "CREATE INDEX IF NOT EXISTS ix_chat_histories_session_id ON chat_histories (session_id)",
+                # users: ίδιες στήλες με το SQLite migration list παραπάνω — έλειπαν εντελώς εδώ,
+                # προκαλώντας 500 σε ΚΑΘΕ query πάνω στο User (login/register/chat) στο production.
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_checked BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS active_task_lesson_id INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS active_task_text TEXT DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS active_success_criteria TEXT DEFAULT '[]'",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS frequent_error_categories TEXT DEFAULT '[]'",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS avg_time_spent FLOAT DEFAULT 0.0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS solved_tasks INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS understanding_level VARCHAR DEFAULT 'developing'",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_assessment_decision VARCHAR DEFAULT 'repeat'",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_advance BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS difficulty_probe_direction VARCHAR DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS avg_hints_per_task FLOAT DEFAULT 0.0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS practice_streak_current INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS practice_streak_goal INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS practice_lesson_correct_streak TEXT DEFAULT '{}'",
             ]:
                 try:
                     await conn.execute(text(stmt))
