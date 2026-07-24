@@ -199,22 +199,25 @@ export default function App() {
     }
   }, []);
 
-  const handleAuth = async () => {
-    setAuthError('');
+  const handleAuth = async (isRetry = false) => {
+    if (!isRetry) setAuthError('');
     const endpoint = isRegistering ? 'register' : 'login';
     const payload = {
       username: authForm.username.trim(),
       password: authForm.password,
     };
 
-    if (!payload.username || !payload.password) {
+    if (!isRetry && (!payload.username || !payload.password)) {
       setAuthError('Συμπλήρωσε όνομα χρήστη και κωδικό.');
       return;
     }
 
     setAuthLoading(true);
+    if (isRetry) setAuthError('Ο server ξυπνάει (Render cold start) — μια στιγμή ακόμα...');
     try {
-      const res = await axios.post(`${API_BASE}/${endpoint}`, payload);
+      const res = await axios.post(`${API_BASE}/${endpoint}`, payload, { timeout: 20000 });
+      setAuthError('');
+      setAuthLoading(false);
       if (isRegistering) {
         setRegisterSuccessModal(true);
         setIsRegistering(false);
@@ -229,13 +232,19 @@ export default function App() {
       const status = err.response?.status;
       if (status === 401) {
         setAuthError('Λάθος όνομα χρήστη ή κωδικός.');
+        setAuthLoading(false);
       } else if (status === 400 && isRegistering) {
         setAuthError('Το όνομα χρήστη υπάρχει ήδη. Δοκίμασε διαφορετικό.');
+        setAuthLoading(false);
+      } else if (!isRetry) {
+        // Πιθανό Render cold-start (~50s) — μία αυτόματη επανάληψη πριν δείξουμε τελικό σφάλμα,
+        // ίδια λογική με το bootstrapSession retry. authLoading ΠΑΡΑΜΕΝΕΙ true μέχρι την επανάληψη.
+        setAuthError('Ο server ξυπνάει (Render cold start) — μια στιγμή ακόμα...');
+        setTimeout(() => handleAuth(true), 6000);
       } else {
         setAuthError('Δεν απαντά ο server. Δοκίμασε ξανά σε λίγο.');
+        setAuthLoading(false);
       }
-    } finally {
-      setAuthLoading(false);
     }
   };
 
@@ -648,7 +657,7 @@ export default function App() {
           {authError && <p style={{ color: '#ff5f56', fontSize: '0.95rem', marginBottom: '16px' }}>{authError}</p>}
 
           <button
-            onClick={handleAuth}
+            onClick={() => handleAuth()}
             disabled={authLoading}
             style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: authLoading ? '#388e3c' : '#4caf50', color: 'white', fontWeight: 'bold', cursor: authLoading ? 'wait' : 'pointer', fontSize: '1.1rem', transition: 'background 0.2s' }}
           >

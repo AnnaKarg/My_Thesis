@@ -600,7 +600,9 @@ def _generate_mentor_response(
     - must_not: τι να αποφύγει ρητά
     - brief=True: 1-2 προτάσεις μόνο (για intros πριν από theory/task)
 
-    Επιστρέφει "" αν αποτύχει το LLM.
+    Αν αποτύχει το LLM (timeout/rate-limit/δίκτυο), επιστρέφει ασφαλές γενικό fallback αντί για
+    κενό string — μερικά call sites χρησιμοποιούν την έξοδο ως ΟΛΟΚΛΗΡΟ το μήνυμα (όχι μόνο ως
+    intro πριν από άλλο περιεχόμενο), οπότε κενό string θα άφηνε τον μαθητή χωρίς καμία απάντηση.
     """
     indicative_part = f"\nΕνδεικτικά (ΟΧΙ αυτολεξεί): {indicative}" if indicative else ""
     must_not_part = f"\nΑπόφυγε: {must_not}" if must_not else ""
@@ -620,9 +622,10 @@ def _generate_mentor_response(
     try:
         result = llm.invoke(prompt_text)
         cleaned = _strip_thinking(result.content)
-        return _enforce_brief(cleaned) if brief else cleaned
+        cleaned = _enforce_brief(cleaned) if brief else cleaned
+        return cleaned if cleaned else "Εντάξει, ας συνεχίσουμε."
     except Exception:
-        return ""
+        return "Εντάξει, ας συνεχίσουμε."
 
 _INTRO_OUTRO_RE = re.compile(r"ΕΙΣΑΓΩΓΗ\s*:\s*(.*?)\s*ΚΛΕΙΣΙΜΟ\s*:\s*(.*)", re.DOTALL | re.IGNORECASE)
 
