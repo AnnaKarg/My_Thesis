@@ -137,6 +137,37 @@ def _normalize_criteria(success_criteria):
         return [success_criteria.strip()]
     return ["Ο κώδικας πρέπει να είναι λειτουργικός."]
 
+def _has_reachable_print(tree, func_names, called_names) -> bool:
+    """print() μέσα σε def που ΔΕΝ καλείται ποτέ δεν εκτελείται ποτέ — δεν πρέπει να μετράει
+    σαν πραγματικό print(). Μια FunctionDef θεωρείται 'unreachable' αν το όνομά της δεν
+    εμφανίζεται ποτέ σε κλήση πουθενά στο πρόγραμμα. Απλή, ρεαλιστική προσέγγιση για κώδικα
+    αρχαρίων — δεν λύνει γενικό call-graph reachability, πιάνει ακριβώς το 'def + ξέχασα να
+    την καλέσω', που ήταν αόρατο πριν (has_print περνούσε όλο το δέντρο αδιακρίτως)."""
+    uncalled = func_names - called_names
+
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self):
+            self.found = False
+            self.depth = 0
+
+        def visit_FunctionDef(self, node):
+            is_uncalled = node.name in uncalled
+            if is_uncalled:
+                self.depth += 1
+            self.generic_visit(node)
+            if is_uncalled:
+                self.depth -= 1
+
+        def visit_Call(self, node):
+            if self.depth == 0 and isinstance(node.func, ast.Name) and node.func.id == "print":
+                self.found = True
+            self.generic_visit(node)
+
+    v = _Visitor()
+    v.visit(tree)
+    return v.found
+
+
 def _build_flags(student_code: str):
     try:
         tree = ast.parse(student_code)
@@ -144,18 +175,48 @@ def _build_flags(student_code: str):
         return {
             "has_assign": False, "has_if": False, "has_for": False, "has_def": False,
             "has_return": False, "has_print": False, "has_append": False,
-            "has_list": False, "has_index": False,
+            "has_list": False, "has_index": False, "list_elem_counts": [],
+            "snake_case_ok": True, "has_elif": False, "has_boolop": False,
+            "has_len_call": False, "has_nonempty_list": False,
+            "has_function_call": False, "has_reachable_print": False,
         }
+
+    assigned_names = {
+        target.id for n in ast.walk(tree) if isinstance(n, ast.Assign)
+        for target in n.targets if isinstance(target, ast.Name)
+    }
+    func_names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+    called_names = {
+        n.func.id for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    }
+
     return {
         "has_assign": any(isinstance(n, ast.Assign) for n in ast.walk(tree)),
         "has_if": any(isinstance(n, ast.If) for n in ast.walk(tree)),
         "has_for": any(isinstance(n, ast.For) for n in ast.walk(tree)),
-        "has_def": any(isinstance(n, ast.FunctionDef) for n in ast.walk(tree)),
+        "has_def": bool(func_names),
         "has_return": any(isinstance(n, ast.Return) for n in ast.walk(tree)),
         "has_print": any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "print" for n in ast.walk(tree)),
         "has_append": any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "append" for n in ast.walk(tree)),
         "has_list": any(isinstance(n, ast.List) for n in ast.walk(tree)),
-        "has_index": any(isinstance(n, ast.Subscript) for n in ast.walk(tree))
+        "has_index": any(isinstance(n, ast.Subscript) for n in ast.walk(tree)),
+        "list_elem_counts": [len(n.elts) for n in ast.walk(tree) if isinstance(n, ast.List)],
+        # snake_case: κανένα από τα ανατεθειμένα ονόματα δεν περιέχει κεφαλαίο
+        "snake_case_ok": all(not any(ch.isupper() for ch in name) for name in assigned_names) if assigned_names else True,
+        # elif: στο AST της Python, ένα elif ΕΙΝΑΙ ένα If φωλιασμένο ως το μοναδικό στοιχείο στο orelse
+        "has_elif": any(
+            isinstance(n, ast.If) and len(n.orelse) == 1 and isinstance(n.orelse[0], ast.If)
+            for n in ast.walk(tree)
+        ),
+        "has_boolop": any(isinstance(n, ast.BoolOp) for n in ast.walk(tree)),
+        "has_len_call": any(
+            isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "len"
+            for n in ast.walk(tree)
+        ),
+        "has_nonempty_list": any(isinstance(n, ast.List) and len(n.elts) > 0 for n in ast.walk(tree)),
+        "has_function_call": bool(func_names & called_names),
+        "has_reachable_print": _has_reachable_print(tree, func_names, called_names),
     }
 
 def _numeric_string_assignments(student_code: str):
@@ -187,30 +248,31 @@ def _criteria_requires_numeric(success_criteria):
     markers = ["αριθμη", "int", "float", "δεκαδ", "χωρίς εισαγωγικά", "number"]
     return any(marker in criteria_text for marker in markers)
 
-def _type_mismatch_detected(student_code: str, success_criteria, current_lesson: str):
+def _type_mismatch_detected(student_code: str, success_criteria):
+    """Ελέγχει αν γνωστά αριθμητικά ονόματα μεταβλητών (NUMERIC_TARGET_NAMES) έχουν αναθεθεί
+    τιμή-αριθμό γραμμένη ως string (π.χ. age = "25"). Πριν εφαρμοζόταν ΜΟΝΟ στο μάθημα
+    Variables/Data Types — το ίδιο ακριβώς λάθος σε επόμενα μαθήματα (π.χ. score = "80" στις
+    Δομές Ελέγχου) περνούσε εντελώς απαρατήρητο. Το λάθος δεν είναι lesson-specific, οπότε ο
+    έλεγχος γενικεύτηκε σε όλα τα μαθήματα — το NUMERIC_TARGET_NAMES παραμένει το φρένο έναντι
+    ψευδών θετικών (ελέγχονται μόνο γνωστά σημασιολογικά ονόματα, όχι κάθε μεταβλητή)."""
     numeric_strings = _numeric_string_assignments(student_code)
     if not numeric_strings:
         return False, []
 
-    # Ελέγχουμε με 'in' γιατί το current_lesson μπορεί να είναι "Variables & Data Types"
-    lesson_numeric_sensitive = "Variables" in current_lesson or "Data Types" in current_lesson
     criteria_numeric_sensitive = _criteria_requires_numeric(success_criteria)
 
     violating_vars = []
     for var in numeric_strings:
-        if criteria_numeric_sensitive or (lesson_numeric_sensitive and var in NUMERIC_TARGET_NAMES):
+        if criteria_numeric_sensitive or var in NUMERIC_TARGET_NAMES:
             violating_vars.append(var)
 
     return bool(violating_vars), sorted(set(violating_vars))
 
 
-def _string_mismatch_detected(student_code: str, current_lesson: str):
+def _string_mismatch_detected(student_code: str):
     """Ελέγχει αν γνωστά string-type ονόματα μεταβλητών έχουν αναθεθεί μη-string τιμή.
-    π.χ. email = 12  →  λάθος (πρέπει να είναι string)"""
-    # Ελέγχουμε με 'in' γιατί το current_lesson μπορεί να είναι "Variables & Data Types"
-    if not ("Variables" in current_lesson or "Data Types" in current_lesson):
-        return False, []
-
+    π.χ. email = 12  →  λάθος (πρέπει να είναι string). Γενικευμένο σε όλα τα μαθήματα για τον
+    ίδιο λόγο με το _type_mismatch_detected παραπάνω — το STRING_TARGET_NAMES είναι το φρένο."""
     try:
         tree = ast.parse(student_code)
     except SyntaxError:
@@ -305,6 +367,77 @@ def _get_printed_var_names(student_code: str) -> set:
                             printed.add(part.value.id)
     return printed
 
+
+def _if_else_direction_mismatch(student_code: str, current_task: str):
+    """Best-effort ντετερμινιστικός έλεγχος αντεστραμμένης λογικής σε απλό if/else (π.χ. task:
+    'μεγαλύτερη από 50 → τύπωνε High, αλλιώς → Low', κώδικας: τυπώνει Low όταν είναι μεγαλύτερη).
+    Πριν αυτό ήταν εντελώς αόρατο στο _strict_task_matching — ελεγχόταν μόνο ΟΤΙ και τα δύο
+    strings υπάρχουν κάπου στον κώδικα, ΟΧΙ σε ποιον κλάδο. Πρόσθετο σήμα δίπλα στον LLM έλεγχο
+    του Debugger (που ήδη προσπαθεί να το πιάσει σημασιολογικά), όχι αντικατάστασή του — αν το
+    task text δεν ταιριάζει με το αναγνωρίσιμο μοτίβο 'X ... αλλιώς ... Y', επιστρέφει (False,
+    None) αντί να μαντέψει."""
+    task = current_task or ""
+    if "αλλιώς" not in task:
+        return False, None
+    direction_match = re.search(r"μεγαλύτερ\w*|μικρότερ\w*", task, re.IGNORECASE)
+    if not direction_match:
+        return False, None
+    is_greater = direction_match.group(0).lower().startswith("μεγαλύτερ")
+
+    before, _, after = task.partition("αλλιώς")
+    strings_before = re.findall(r"['\"]([^'\"]+)['\"]", before)
+    strings_after = re.findall(r"['\"]([^'\"]+)['\"]", after)
+    if not strings_before or not strings_after:
+        return False, None
+    true_string, false_string = strings_before[-1], strings_after[0]
+    if true_string == false_string:
+        return False, None
+
+    try:
+        tree = ast.parse(student_code)
+    except SyntaxError:
+        return False, None
+
+    def _first_print_string(stmts):
+        for s in stmts:
+            if (isinstance(s, ast.Expr) and isinstance(s.value, ast.Call)
+                    and isinstance(s.value.func, ast.Name) and s.value.func.id == "print"):
+                for a in s.value.args:
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                        return a.value
+        return None
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not (isinstance(test, ast.Compare) and len(test.ops) == 1):
+            continue
+        op = test.ops[0]
+        if not isinstance(op, (ast.Gt, ast.GtE, ast.Lt, ast.LtE)):
+            continue
+        if not node.orelse or isinstance(node.orelse[0], ast.If):
+            continue  # χωρίς else, ή if/elif/else — εκτός εμβέλειας αυτού του απλού ελέγχου
+        body_string = _first_print_string(node.body)
+        else_string = _first_print_string(node.orelse)
+        if body_string is None or else_string is None:
+            continue
+        if body_string not in (true_string, false_string) or else_string not in (true_string, false_string):
+            continue  # άσχετα strings — δεν είναι το if/else που αφορά η εκφώνηση
+        code_is_greater = isinstance(op, (ast.Gt, ast.GtE))
+        same_direction = (code_is_greater == is_greater)
+        expected_body = true_string if same_direction else false_string
+        expected_else = false_string if same_direction else true_string
+        if body_string == expected_else and else_string == expected_body:
+            return True, (
+                f"Η λογική if/else φαίνεται αντεστραμμένη: όταν η συνθήκη ισχύει τυπώνεται "
+                f"'{body_string}' αντί για '{expected_body}'."
+            )
+        return False, None
+
+    return False, None
+
+
 def _strict_task_matching(student_code: str, current_task: str):
     if not current_task:
         return True, []
@@ -376,6 +509,10 @@ def _strict_task_matching(student_code: str, current_task: str):
                 f"{', '.join(missing_strings)}."
             )
 
+    is_inverted, inversion_msg = _if_else_direction_mismatch(student_code, current_task)
+    if is_inverted:
+        failures.append(inversion_msg)
+
     return (len(failures) == 0), failures
 
 def _parse_performance_summary(performance_summary):
@@ -388,10 +525,46 @@ def _parse_performance_summary(performance_summary):
     except Exception:
         return {}
 
+_GREEK_LIST_COUNT_WORDS = {"ένα": 1, "ενα": 1, "δύο": 2, "δυο": 2, "τρία": 3, "τρια": 3}
+
+
+def _required_list_count(criterion_lower: str):
+    """Εξάγει πλήθος στοιχείων λίστας που αναφέρεται ρητά στο ίδιο το κριτήριο (π.χ. 'τουλάχιστον
+    ένα στοιχείο' → (1, ελάχιστο)). Επιστρέφει (None, False) αν δεν αναφέρεται αριθμός — τότε
+    αρκεί η λίστα να μην είναι εντελώς κενή (βλ. has_nonempty_list).
+
+    ΣΗΜΑΝΤΙΚΟ: χρησιμοποιεί \\b όρια λέξης, ΟΧΙ naive substring — το 'ένα' ως substring ταιριάζει
+    και μέσα σε εντελώς άσχετες λέξεις όπως 'χωρισμένα' (καταλήγει σε -μένα), δίνοντας ψευδές
+    θετικό αποτέλεσμα. Επιβεβαιωμένο με δοκιμή."""
+    is_minimum = bool(re.search(r"\bτουλάχιστον\b|\bτουλαχιστον\b", criterion_lower))
+    for word, n in _GREEK_LIST_COUNT_WORDS.items():
+        if re.search(rf"\b{word}\b", criterion_lower):
+            return n, is_minimum
+    return None, False
+
+
 def _criterion_passed(criterion: str, flags):
     c = criterion.lower()
     if "συντακ" in c:
         return True
+    if "snake_case" in c:
+        return flags.get("snake_case_ok", True)
+    # Compound "if με elif ή λογικό τελεστή (and/or)" — πιο αυστηρό από απλό has_if,
+    # πρέπει να ελεγχθεί ΠΡΙΝ από τη γενική "if"/"δομή" περίπτωση παρακάτω.
+    if "elif" in c or "and/or" in c or "λογικό τελεστ" in c:
+        return flags["has_if"] and (flags.get("has_elif") or flags.get("has_boolop"))
+    if "len(" in c:
+        return flags.get("has_len_call", False)
+    # "Η συνάρτηση καλείται..." — πρέπει να ελεγχθεί ΠΡΙΝ από "def"/"συνάρτ" παρακάτω,
+    # αλλιώς θα έπιανε εκείνο το γενικό branch (has_def) αντί να ελέγξει πραγματική κλήση.
+    if "καλείται" in c or "κλήση" in c:
+        return flags.get("has_function_call", False)
+    # "print" πρέπει να ελεγχθεί ΠΡΙΝ από "def"/"συνάρτ" παρακάτω — κριτήρια όπως
+    # "Χρησιμοποιείται print() μέσα στη συνάρτηση" περιέχουν ΚΑΙ τις δύο λέξεις, και πριν
+    # έπιανε πάντα "συνάρτ" πρώτο (has_def) αντί να ελέγξει καθόλου το print (επιβεβαιώθηκε με
+    # δοκιμή: κρυμμένο bug, όχι υποθετικό).
+    if "print" in c or "τύπων" in c:
+        return flags.get("has_reachable_print", flags["has_print"])
     if "ανάθεση" in c or "=" in c:
         return flags["has_assign"]
     if "if" in c or "δομή" in c:
@@ -403,13 +576,17 @@ def _criterion_passed(criterion: str, flags):
     if "append" in c:
         return flags["has_append"]
     if "λίστα" in c or "[]" in c:
-        return flags["has_list"]
+        if not flags["has_list"]:
+            return False
+        required_count, is_minimum = _required_list_count(c)
+        if required_count is None:
+            return flags.get("has_nonempty_list", True)
+        counts = flags.get("list_elem_counts") or []
+        return any(n >= required_count for n in counts) if is_minimum else any(n == required_count for n in counts)
     if "index" in c or "[0]" in c:
         return flags["has_index"]
     if "return" in c:
         return flags["has_return"]
-    if "print" in c or "τύπων" in c:
-        return flags["has_print"]
     # Κριτήρια string/numeric αποθήκευσης — ελέγχονται ήδη από _type_mismatch_detected
     # και _strict_task_matching. Εδώ χαρακτηρίζονται ως "passed" αν υπάρχει έστω μία ανάθεση.
     if "εισαγωγικ" in c or "string" in c or "αριθμητ" in c or "χωρίς εισαγωγικ" in c:
@@ -446,8 +623,8 @@ def _gather_assessment_facts(debug_report, student_code, success_criteria, curre
     """Συγκεντρώνει ΟΛΑ τα αντικειμενικά, deterministic ευρήματα (δομημένη γνώση) που θα
     τροφοδοτήσουν την ολιστική κρίση του LLM. Καμία απόφαση (is_correct/decision) δεν παίρνεται
     εδώ — μόνο μέτρηση γεγονότων, ίδια ακριβώς λογική με πριν, απλά χωρίς να αποφασίζει η ίδια."""
-    type_mismatch = _type_mismatch_detected(student_code, success_criteria, current_lesson)
-    string_mismatch = _string_mismatch_detected(student_code, current_lesson)
+    type_mismatch = _type_mismatch_detected(student_code, success_criteria)
+    string_mismatch = _string_mismatch_detected(student_code)
     empty_list_issue = _empty_string_list_elements_detected(student_code, current_lesson)
     strict_match_ok, strict_failures = _strict_task_matching(student_code, current_task)
 

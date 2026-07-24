@@ -65,6 +65,17 @@ class _Analyzer(ast.NodeVisitor):
             for t in node.targets:
                 if isinstance(t, ast.Name):
                     self.func_aliases.add(t.id)
+        # total = total + num (ή num + total) — ισοδύναμο accumulator pattern με total += num.
+        # Η ίδια η θεωρία του μαθήματος «Επαναλήψεις» το διδάσκει ρητά ως ισοδύναμο
+        # (βλ. content/lessons.json: "total += num   # total = total + num") — αν εδώ αναγνωριζόταν
+        # ΜΟΝΟ το += , ένας μαθητής που ακολουθεί κυριολεκτικά τη θεωρία θα σημειωνόταν λάθος.
+        if isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.Add):
+            operands = (node.value.left, node.value.right)
+            for target in node.targets:
+                if isinstance(target, ast.Name) and any(
+                    isinstance(o, ast.Name) and o.id == target.id for o in operands
+                ):
+                    self.has_aug_assign = True
         self.generic_visit(node)
 
     def visit_AugAssign(self, node):
@@ -213,6 +224,34 @@ def _gather_facts(tree, success_criteria, current_task=""):
     if ("άθροισμ" in criteria_text or "αθροιστ" in criteria_text) and analyzer.has_for and not analyzer.has_aug_assign:
         facts.append(("Λείπει ο αθροιστής (total += ...). Χρειάζεται μεταβλητή που ξεκινά από 0 και αυξάνεται σε κάθε επανάληψη.", "missing_accumulator"))
 
+    # Πιθανό ατέρμονο (infinite) loop: while όπου καμία μεταβλητή της συνθήκης δεν ενημερώνεται
+    # ποτέ μέσα στο σώμα, χωρίς break. Πολύ συχνό λάθος αρχαρίων (ξέχασε x += 1) — πριν ήταν
+    # εντελώς αόρατο (has_print/has_for κλπ δεν λένε τίποτα γι' αυτό), οπότε τέτοιος κώδικας
+    # μπορούσε να βαθμολογηθεί ως πλήρως σωστός ενώ στην πραγματικότητα δεν τερματίζει ποτέ.
+    for _while_node in ast.walk(tree):
+        if not isinstance(_while_node, ast.While):
+            continue
+        _condition_names = {n.id for n in ast.walk(_while_node.test) if isinstance(n, ast.Name)}
+        if not _condition_names:
+            continue
+        _modified_names = set()
+        for _stmt in ast.walk(_while_node):
+            if isinstance(_stmt, ast.AugAssign) and isinstance(_stmt.target, ast.Name):
+                _modified_names.add(_stmt.target.id)
+            elif isinstance(_stmt, ast.Assign):
+                for _t in _stmt.targets:
+                    if isinstance(_t, ast.Name):
+                        _modified_names.add(_t.id)
+        _has_break = any(isinstance(n, ast.Break) for n in ast.walk(_while_node))
+        if not (_condition_names & _modified_names) and not _has_break:
+            facts.append((
+                "Πιθανό ατέρμονο (infinite) loop: η μεταβλητή στη συνθήκη του while δεν αλλάζει "
+                "ποτέ μέσα στο σώμα του — αν εκτελεστεί, δεν σταματάει ποτέ. Χρειάζεται ενημέρωση "
+                "της μεταβλητής (π.χ. x += 1) σε κάθε επανάληψη.",
+                "possible_infinite_loop",
+            ))
+            break
+
     # print(func_ref) — συνάρτηση περνά ως αναφορά αντί να καλείται (print(process) αντί print(process(...)))
     _bare_in_print = [
         a for a in analyzer.print_args
@@ -310,6 +349,7 @@ _DEBUG_CATEGORIES = {
     "wrong_list_type": "λίστα περιέχει strings αντί αριθμητικά στοιχεία όπου ζητούνται αριθμοί",
     "empty_print": "το print() καλείται χωρίς κανένα όρισμα",
     "missing_output": "λείπει εντελώς η εντολή print() ενώ ζητείται εμφάνιση αποτελέσματος",
+    "possible_infinite_loop": "while loop όπου η μεταβλητή της συνθήκης δεν ενημερώνεται ποτέ μέσα στο σώμα του loop, χωρίς break — αν εκτελεστεί, δεν τερματίζει ποτέ",
     "general_logic": "οποιοδήποτε άλλο σημασιολογικό/λογικό πρόβλημα που δεν ταιριάζει στις παραπάνω κατηγορίες",
 }
 
