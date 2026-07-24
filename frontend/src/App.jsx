@@ -604,13 +604,13 @@ export default function App() {
         {/* ── Modal επιτυχούς εγγραφής ── */}
         {registerSuccessModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
-            <div style={{ background: '#1e1e1e', border: '1px solid #4caf50', borderRadius: '16px', padding: '40px 48px', textAlign: 'center', maxWidth: '420px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' }}>
+            <div style={{ background: '#1e1e1e', border: '1px solid var(--accent)', borderRadius: '10px', padding: '40px 48px', textAlign: 'center', maxWidth: '420px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' }}>
               <div style={{ fontSize: '3rem', marginBottom: '14px' }}></div>
-              <h3 style={{ color: '#4caf50', marginBottom: '12px', fontSize: '1.3rem' }}>Η εγγραφή έγινε!</h3>
+              <h3 style={{ color: 'var(--accent)', marginBottom: '12px', fontSize: '1.3rem' }}>Η εγγραφή έγινε!</h3>
               <p style={{ color: '#ccc', fontSize: '1.05rem', marginBottom: '28px' }}>Ο λογαριασμός σου δημιουργήθηκε επιτυχώς. Μπορείς τώρα να συνδεθείς.</p>
               <button
                 onClick={() => setRegisterSuccessModal(false)}
-                style={{ padding: '12px 36px', borderRadius: '8px', border: 'none', background: '#4caf50', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem' }}
+                style={{ padding: '12px 36px', borderRadius: '8px', border: 'none', background: 'var(--accent)', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem' }}
               >
                 Σύνδεση
               </button>
@@ -618,8 +618,8 @@ export default function App() {
           </div>
         )}
 
-        <div style={{ background: '#1e1e1e', padding: 'clamp(24px, 5vw, 52px) clamp(20px, 5vw, 56px)', borderRadius: '24px', width: '100%', maxWidth: '460px', textAlign: 'center', boxShadow: '0 10px 48px rgba(0,0,0,0.7)', boxSizing: 'border-box' }}>
-          <Code2 size={60} color="#4caf50" style={{ marginBottom: '18px' }} />
+        <div style={{ background: '#1e1e1e', padding: 'clamp(24px, 5vw, 52px) clamp(20px, 5vw, 56px)', borderRadius: '10px', width: '100%', maxWidth: '460px', textAlign: 'center', boxShadow: '0 10px 48px rgba(0,0,0,0.7)', boxSizing: 'border-box' }}>
+          <Code2 size={60} color="var(--accent)" style={{ marginBottom: '18px' }} />
           <h2 style={{ marginBottom: '8px', fontSize: '1.8rem' }}>AI Python Tutor</h2>
           <p style={{ color: '#888', fontSize: '1rem', marginBottom: '28px' }}>
             {isRegistering ? 'Δημιούργησε λογαριασμό για να ξεκινήσεις' : 'Συνδέσου για να γνωρίσεις τον κόσμο της Python.'}
@@ -654,18 +654,18 @@ export default function App() {
             </button>
           </div>
 
-          {authError && <p style={{ color: '#ff5f56', fontSize: '0.95rem', marginBottom: '16px' }}>{authError}</p>}
+          {authError && <p style={{ color: 'var(--danger)', fontSize: '0.95rem', marginBottom: '16px' }}>{authError}</p>}
 
           <button
             onClick={() => handleAuth()}
             disabled={authLoading}
-            style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: authLoading ? '#388e3c' : '#4caf50', color: 'white', fontWeight: 'bold', cursor: authLoading ? 'wait' : 'pointer', fontSize: '1.1rem', transition: 'background 0.2s' }}
+            style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', background: authLoading ? 'var(--accent-dark)' : 'var(--accent)', color: 'white', fontWeight: 'bold', cursor: authLoading ? 'wait' : 'pointer', fontSize: '1.1rem', transition: 'background 0.2s' }}
           >
             {authLoading ? 'Σύνδεση...' : (isRegistering ? 'Εγγραφή' : 'Είσοδος')}
           </button>
           <p
             onClick={() => { setIsRegistering(!isRegistering); setAuthError(''); setShowPassword(false); }}
-            style={{ marginTop: '22px', color: '#4caf50', cursor: 'pointer', fontSize: '1rem' }}
+            style={{ marginTop: '22px', color: 'var(--accent)', cursor: 'pointer', fontSize: '1rem' }}
           >
             {isRegistering ? 'Επιστροφή στο Login' : 'Δημιουργία λογαριασμού'}
           </p>
@@ -679,11 +679,11 @@ export default function App() {
     const greeting = hour < 12 ? 'Καλημέρα' : 'Καλησπέρα';
 
     return (
-      <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'sans-serif', overflowY: 'auto' }}>
+      <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-body)', overflowY: 'auto' }}>
         {/* Header */}
         <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2a2a2a', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Code2 size={22} color="#4caf50" />
+            <Code2 size={22} color="var(--accent)" />
             <strong style={{ fontSize: '1.05rem' }}>AI Python Tutor</strong>
           </div>
           <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#888', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem' }}>
@@ -694,7 +694,7 @@ export default function App() {
         {/* Main — flex-start (ΟΧΙ center) ώστε το greeting+κάρτες να μένουν σε σταθερή θέση
             ανεξάρτητα από το αν φόρτωσε ή όχι το mastery_profile· αλλιώς το centering μετατοπίζει
             ΟΛΟ το block κάθε φορά που αλλάζει το συνολικό του ύψος. */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '64px 20px' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '140px 20px 40px' }}>
           <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 2.2rem)', marginBottom: '8px', textAlign: 'center', fontWeight: 700 }}>
             {greeting}, {user.username}!
           </h1>
@@ -702,16 +702,16 @@ export default function App() {
             Τι θα ήθελες να κάνεις σήμερα;
           </p>
 
-          <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '860px', width: '100%' }}>
+          <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '960px', width: '100%' }}>
 
             {/* Κάρτα 1: Μαθήματα — ενεργή */}
             <div
               onClick={handleEnterMentor}
-              style={{ background: '#1e1e1e', border: '2px solid #4caf50', borderRadius: '20px', padding: '36px 24px', width: '240px', cursor: 'pointer', textAlign: 'center', boxShadow: '0 4px 20px rgba(76,175,80,0.12)', transition: 'transform 0.15s, box-shadow 0.15s', boxSizing: 'border-box' }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-5px)'; e.currentTarget.style.boxShadow = '0 10px 32px rgba(76,175,80,0.28)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(76,175,80,0.12)'; }}
+              style={{ background: '#1e1e1e', border: '2px solid var(--accent)', borderRadius: '10px', padding: '36px 24px', width: '290px', cursor: 'pointer', textAlign: 'center', transition: 'transform 0.15s, border-color 0.15s', boxSizing: 'border-box' }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
             >
-              <BookOpen size={52} color="#4caf50" style={{ marginBottom: '18px' }} />
+              <BookOpen size={52} color="var(--accent)" style={{ marginBottom: '18px' }} />
               <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem' }}>Μαθήματα Python</h3>
               <p style={{ color: '#888', fontSize: '0.88rem', margin: 0, lineHeight: '1.55' }}>
                 Δομημένα μαθήματα με τον προσωπικό σου μέντορα
@@ -721,11 +721,11 @@ export default function App() {
             {/* Κάρτα 2: Εξάσκηση — Button 2, ελεύθερη πρακτική με streak */}
             <div
               onClick={handleEnterPractice}
-              style={{ background: '#1e1e1e', border: '2px solid #4caf50', borderRadius: '20px', padding: '36px 24px', width: '240px', cursor: 'pointer', textAlign: 'center', boxShadow: '0 4px 20px rgba(76,175,80,0.12)', transition: 'transform 0.15s, box-shadow 0.15s', boxSizing: 'border-box' }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-5px)'; e.currentTarget.style.boxShadow = '0 10px 32px rgba(76,175,80,0.28)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(76,175,80,0.12)'; }}
+              style={{ background: '#1e1e1e', border: '2px solid var(--accent)', borderRadius: '10px', padding: '36px 24px', width: '290px', cursor: 'pointer', textAlign: 'center', transition: 'transform 0.15s, border-color 0.15s', boxSizing: 'border-box' }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
             >
-              <Zap size={52} color="#4caf50" style={{ marginBottom: '18px' }} />
+              <Zap size={52} color="var(--accent)" style={{ marginBottom: '18px' }} />
               <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem' }}>Εξάσκηση</h3>
               <p style={{ color: '#888', fontSize: '0.88rem', margin: 0, lineHeight: '1.55' }}>
                 Προσαρμοστικές ασκήσεις βάσει των αναγκών σου
@@ -735,11 +735,11 @@ export default function App() {
             {/* Κάρτα 3: Αξιολόγηση κώδικα — Button 3, ελεύθερος έλεγχος κώδικα */}
             <div
               onClick={handleEnterFreeCheck}
-              style={{ background: '#1e1e1e', border: '2px solid #4caf50', borderRadius: '20px', padding: '36px 24px', width: '240px', cursor: 'pointer', textAlign: 'center', boxShadow: '0 4px 20px rgba(76,175,80,0.12)', transition: 'transform 0.15s, box-shadow 0.15s', boxSizing: 'border-box' }}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-5px)'; e.currentTarget.style.boxShadow = '0 10px 32px rgba(76,175,80,0.28)'; }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(76,175,80,0.12)'; }}
+              style={{ background: '#1e1e1e', border: '2px solid var(--accent)', borderRadius: '10px', padding: '36px 24px', width: '290px', cursor: 'pointer', textAlign: 'center', transition: 'transform 0.15s, border-color 0.15s', boxSizing: 'border-box' }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-3px)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
             >
-              <FileCode size={52} color="#4caf50" style={{ marginBottom: '18px' }} />
+              <FileCode size={52} color="var(--accent)" style={{ marginBottom: '18px' }} />
               <h3 style={{ margin: '0 0 10px', fontSize: '1.15rem' }}>Αξιολόγηση Κώδικα</h3>
               <p style={{ color: '#888', fontSize: '0.88rem', margin: 0, lineHeight: '1.55' }}>
                 Ανέβασε δικό σου κώδικα για ανάλυση
@@ -753,7 +753,7 @@ export default function App() {
             <button
               onClick={() => setShowProgressModal(true)}
               style={{ marginTop: '40px', background: '#1e1e1e', border: '2px solid #333', borderRadius: '14px', padding: '14px 28px', color: '#ccc', cursor: 'pointer', fontSize: '0.95rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '10px', transition: 'border-color 0.15s, transform 0.15s' }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = '#4caf50'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = '#333'; e.currentTarget.style.transform = 'translateY(0)'; }}
             >
               Η πρόοδός μου
@@ -765,7 +765,7 @@ export default function App() {
         {showProgressModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
             onClick={() => setShowProgressModal(false)}>
-            <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '560px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}
+            <div style={{ background: '#252526', borderRadius: '10px', width: '100%', maxWidth: '560px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}
               onClick={e => e.stopPropagation()}>
               <div style={{ padding: '16px 20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
                 <strong style={{ color: '#aaa', fontSize: '0.95rem' }}>Η πρόοδός μου</strong>
@@ -811,7 +811,7 @@ export default function App() {
                           </span>
                         )}
                       </span>
-                      <span style={{ fontSize: '0.82rem', color: mastery === 100 ? '#4caf50' : mastery === 0 ? '#444' : '#f9a825', fontWeight: 600 }}>
+                      <span style={{ fontSize: '0.82rem', color: mastery === 100 ? 'var(--accent)' : mastery === 0 ? '#444' : '#f9a825', fontWeight: 600 }}>
                         {mastery}%
                       </span>
                     </div>
@@ -820,7 +820,7 @@ export default function App() {
                         width: `${mastery}%`,
                         height: '100%',
                         borderRadius: '6px',
-                        background: mastery === 100 ? '#4caf50' : mastery >= 75 ? '#66bb6a' : mastery >= 50 ? '#f9a825' : mastery > 0 ? '#ef5350' : 'transparent',
+                        background: mastery === 100 ? 'var(--accent)' : mastery >= 75 ? '#66bb6a' : mastery >= 50 ? '#f9a825' : mastery > 0 ? '#ef5350' : 'transparent',
                         transition: 'width 0.5s ease',
                       }} />
                     </div>
@@ -843,10 +843,10 @@ export default function App() {
     const codeTooLong = freeCheckCode.length > FREE_CHECK_MAX_CHARS;
 
     return (
-      <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'sans-serif', overflowY: 'auto' }}>
+      <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-body)', overflowY: 'auto' }}>
         <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2a2a2a', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <FileCode size={22} color="#4caf50" />
+            <FileCode size={22} color="var(--accent)" />
             <strong style={{ fontSize: '1.05rem' }}>Αξιολόγηση Κώδικα</strong>
           </div>
           <button onClick={handleGoHomeFromFreeCheck} style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#888', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
@@ -868,7 +868,7 @@ export default function App() {
               onChange={e => setFreeCheckDescription(e.target.value)}
               placeholder="π.χ. 'θέλω να υπολογίσω το άθροισμα μιας λίστας αριθμών'"
               rows={2}
-              style={{ width: '100%', boxSizing: 'border-box', background: '#1e1e1e', border: '1px solid #333', borderRadius: '10px', color: 'white', padding: '10px 12px', fontSize: '0.9rem', fontFamily: 'sans-serif', resize: 'vertical', marginBottom: '16px' }}
+              style={{ width: '100%', boxSizing: 'border-box', background: '#1e1e1e', border: '1px solid #333', borderRadius: '10px', color: 'white', padding: '10px 12px', fontSize: '0.9rem', fontFamily: 'var(--font-body)', resize: 'vertical', marginBottom: '16px' }}
             />
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
@@ -893,7 +893,7 @@ export default function App() {
               disabled={!freeCheckCode.trim() || freeCheckLoading || codeTooLong}
               style={{
                 marginTop: '18px', width: '100%', padding: '13px', borderRadius: '10px', border: 'none',
-                background: (!freeCheckCode.trim() || freeCheckLoading || codeTooLong) ? '#2a2a2a' : '#4caf50',
+                background: (!freeCheckCode.trim() || freeCheckLoading || codeTooLong) ? '#2a2a2a' : 'var(--accent)',
                 color: (!freeCheckCode.trim() || freeCheckLoading || codeTooLong) ? '#666' : '#0d1f0f',
                 fontWeight: 700, fontSize: '0.95rem', cursor: (!freeCheckCode.trim() || freeCheckLoading || codeTooLong) ? 'not-allowed' : 'pointer',
               }}
@@ -918,7 +918,7 @@ export default function App() {
         {showLeaveFreeCheckConfirm && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
             onClick={() => setShowLeaveFreeCheckConfirm(false)}>
-            <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '420px', border: '1px solid #3a3a3a', padding: '24px' }}
+            <div style={{ background: '#252526', borderRadius: '10px', width: '100%', maxWidth: '420px', border: '1px solid #3a3a3a', padding: '24px' }}
               onClick={e => e.stopPropagation()}>
               <strong style={{ color: '#eee', fontSize: '1rem', display: 'block', marginBottom: '10px' }}>Έχεις κώδικα σε εξέλιξη</strong>
               <p style={{ color: '#aaa', fontSize: '0.9rem', lineHeight: '1.5', margin: '0 0 22px' }}>
@@ -950,10 +950,10 @@ export default function App() {
     const goalReached = practiceStreakGoal > 0 && practiceStreakCurrent >= practiceStreakGoal;
 
     return (
-      <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'sans-serif' }}>
+      <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-body)' }}>
         <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2a2a2a', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Zap size={22} color="#4caf50" />
+            <Zap size={22} color="var(--accent)" />
             <strong style={{ fontSize: '1.05rem' }}>Εξάσκηση</strong>
           </div>
           <button onClick={handleGoHomeFromPractice} style={{ background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#888', cursor: 'pointer', padding: '6px 12px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
@@ -979,8 +979,8 @@ export default function App() {
                   style={{
                     display: 'block', width: '100%', textAlign: 'left', marginBottom: '8px',
                     padding: '10px 12px', borderRadius: '10px', cursor: 'pointer', fontSize: '0.85rem',
-                    border: active ? '2px solid #4caf50' : '2px solid #2a2a2a',
-                    background: active ? 'rgba(76,175,80,0.12)' : '#1a1a1a',
+                    border: active ? '2px solid var(--accent)' : '2px solid #2a2a2a',
+                    background: active ? 'rgba(var(--accent-rgb),0.12)' : '#1a1a1a',
                     color: active ? '#eee' : '#aaa',
                   }}
                 >
@@ -997,10 +997,10 @@ export default function App() {
               {/* Streak */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#1e1e1e', border: '1px solid #333', borderRadius: '12px', padding: '14px 18px', marginBottom: '20px' }}>
                 <div>
-                  <span style={{ fontSize: '1.1rem', fontWeight: 700, color: goalReached ? '#4caf50' : '#eee' }}>
+                  <span style={{ fontSize: '1.1rem', fontWeight: 700, color: goalReached ? 'var(--accent)' : '#eee' }}>
                     Σερί: {practiceStreakCurrent}{practiceStreakGoal > 0 ? ` / ${practiceStreakGoal}` : ''}
                   </span>
-                  {goalReached && <span style={{ marginLeft: '10px', color: '#4caf50', fontSize: '0.85rem' }}>Πέτυχες τον στόχο σου!</span>}
+                  {goalReached && <span style={{ marginLeft: '10px', color: 'var(--accent)', fontSize: '0.85rem' }}>Πέτυχες τον στόχο σου!</span>}
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <input
@@ -1024,7 +1024,7 @@ export default function App() {
                   style={{
                     width: '100%', padding: '13px', borderRadius: '10px', border: 'none', fontWeight: 700, fontSize: '0.95rem',
                     cursor: (practiceSelectedLessonIds.length === 0 || practiceLoading) ? 'not-allowed' : 'pointer',
-                    background: (practiceSelectedLessonIds.length === 0 || practiceLoading) ? '#2a2a2a' : '#4caf50',
+                    background: (practiceSelectedLessonIds.length === 0 || practiceLoading) ? '#2a2a2a' : 'var(--accent)',
                     color: (practiceSelectedLessonIds.length === 0 || practiceLoading) ? '#666' : '#0d1f0f',
                   }}
                 >
@@ -1059,7 +1059,7 @@ export default function App() {
                       style={{
                         flex: 1, padding: '13px', borderRadius: '10px', border: 'none', fontWeight: 700, fontSize: '0.95rem',
                         cursor: (!practiceCode.trim() || practiceLoading) ? 'not-allowed' : 'pointer',
-                        background: (!practiceCode.trim() || practiceLoading) ? '#2a2a2a' : '#4caf50',
+                        background: (!practiceCode.trim() || practiceLoading) ? '#2a2a2a' : 'var(--accent)',
                         color: (!practiceCode.trim() || practiceLoading) ? '#666' : '#0d1f0f',
                       }}
                     >
@@ -1085,8 +1085,8 @@ export default function App() {
               {practiceResponse && (
                 <div style={{
                   marginTop: '16px', borderRadius: '10px', padding: '16px 18px', fontSize: '0.92rem', lineHeight: '1.6', whiteSpace: 'pre-wrap',
-                  background: practiceIsCorrect ? 'rgba(76,175,80,0.1)' : '#1e1e1e',
-                  border: practiceIsCorrect ? '1px solid #4caf50' : '1px solid #333',
+                  background: practiceIsCorrect ? 'rgba(var(--accent-rgb),0.1)' : '#1e1e1e',
+                  border: practiceIsCorrect ? '1px solid var(--accent)' : '1px solid #333',
                   color: '#ddd',
                 }}>
                   {practiceResponse}
@@ -1099,7 +1099,7 @@ export default function App() {
         {showLeavePracticeConfirm && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
             onClick={() => setShowLeavePracticeConfirm(false)}>
-            <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '420px', border: '1px solid #3a3a3a', padding: '24px' }}
+            <div style={{ background: '#252526', borderRadius: '10px', width: '100%', maxWidth: '420px', border: '1px solid #3a3a3a', padding: '24px' }}
               onClick={e => e.stopPropagation()}>
               <strong style={{ color: '#eee', fontSize: '1rem', display: 'block', marginBottom: '10px' }}>Έχεις ενεργή άσκηση</strong>
               <p style={{ color: '#aaa', fontSize: '0.9rem', lineHeight: '1.5', margin: '0 0 22px' }}>
@@ -1129,13 +1129,13 @@ export default function App() {
   const isMobile = windowWidth < 640;
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'sans-serif', overflow: 'hidden' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'var(--font-body)', overflow: 'hidden' }}>
 
       {/* ── History Modal ────────────────────────────────────────────────── */}
       {historyModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
           onClick={() => setHistoryModal(null)}>
-          <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '680px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}
+          <div style={{ background: '#252526', borderRadius: '10px', width: '100%', maxWidth: '680px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', border: '1px solid #3a3a3a' }}
             onClick={e => e.stopPropagation()}>
             <div style={{ padding: '16px 20px', background: '#2d2d2d', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
               <strong style={{ color: '#aaa', fontSize: '0.95rem' }}>Συνομιλία — {historyModal.title}</strong>
@@ -1158,7 +1158,7 @@ export default function App() {
       {showLeaveTaskConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
           onClick={() => setShowLeaveTaskConfirm(false)}>
-          <div style={{ background: '#252526', borderRadius: '16px', width: '100%', maxWidth: '420px', border: '1px solid #3a3a3a', padding: '24px' }}
+          <div style={{ background: '#252526', borderRadius: '10px', width: '100%', maxWidth: '420px', border: '1px solid #3a3a3a', padding: '24px' }}
             onClick={e => e.stopPropagation()}>
             <strong style={{ color: '#eee', fontSize: '1rem', display: 'block', marginBottom: '10px' }}>Έχεις ενεργή άσκηση</strong>
             <p style={{ color: '#aaa', fontSize: '0.9rem', lineHeight: '1.5', margin: '0 0 22px' }}>
@@ -1198,7 +1198,7 @@ export default function App() {
                   style={{ padding: '12px 14px', borderBottom: '1px solid #222', cursor: 'pointer', transition: 'background 0.15s' }}
                   onMouseEnter={e => e.currentTarget.style.background = '#252525'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                  <div style={{ fontSize: '0.78rem', color: '#4caf50', marginBottom: '4px', fontWeight: 600 }}>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--accent)', marginBottom: '4px', fontWeight: 600 }}>
                     {formatSessionDate(s.created_at)}
                   </div>
                   <div style={{ fontSize: '0.8rem', color: '#888', lineHeight: '1.4', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
@@ -1218,7 +1218,7 @@ export default function App() {
             {courseCompleted && (
               <button
                 onClick={() => { setCourseCompleted(false); setMessages([]); setCurrentView('landing'); }}
-                style={{ background: '#4caf50', border: 'none', borderRadius: '8px', color: 'white', padding: '6px 14px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}
+                style={{ background: 'var(--accent)', border: 'none', borderRadius: '8px', color: 'white', padding: '6px 14px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}
               >
                 Αρχική
               </button>
@@ -1245,7 +1245,7 @@ export default function App() {
                 </button>
               </>
             )}
-            <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: '#ff5f56', cursor: 'pointer' }}><LogOut size={20} /></button>
+            <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', color: 'var(--danger)', cursor: 'pointer' }}><LogOut size={20} /></button>
           </div>
         </div>
 
@@ -1264,13 +1264,13 @@ export default function App() {
                   {hasStartButtonToken(m.content) && i === lastStartIdx && !editorEnabled && (
                     <button
                       onClick={handleStartTask}
-                      style={{ marginTop: '15px', padding: '10px 20px', background: '#4caf50', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem' }}
+                      style={{ marginTop: '15px', padding: '10px 20px', background: 'var(--accent)', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem' }}
                     >
                       Πάτα εδώ για να ξεκινήσεις την άσκηση!
                     </button>
                   )}
                   {hasStartButtonToken(m.content) && i === lastStartIdx && editorEnabled && (
-                    <span style={{ marginTop: '12px', display: 'inline-block', color: '#4caf50', fontSize: '0.85rem', fontStyle: 'italic' }}>
+                    <span style={{ marginTop: '12px', display: 'inline-block', color: 'var(--accent)', fontSize: '0.85rem', fontStyle: 'italic' }}>
                       Η άσκηση ξεκίνησε — γράφε στον editor!
                     </span>
                   )}
@@ -1303,7 +1303,7 @@ export default function App() {
               <Code2 size={18} color={editorEnabled ? '#007acc' : '#555'} />
               <span style={{ color: editorEnabled ? 'white' : '#666' }}>{getEditorFileName(user?.username)}</span>
               {!editorEnabled && (
-                <span style={{ fontSize: '0.75rem', color: taskJustCompleted ? '#4caf50' : '#888', background: '#333', padding: '2px 8px', borderRadius: '4px' }}>
+                <span style={{ fontSize: '0.75rem', color: taskJustCompleted ? 'var(--accent)' : '#888', background: '#333', padding: '2px 8px', borderRadius: '4px' }}>
                   {taskJustCompleted ? 'Η άσκηση ολοκληρώθηκε! Περίμενε την επόμενη.' : 'Η άσκηση δεν έχει ξεκινήσει ακόμα.'}
                 </span>
               )}
@@ -1312,7 +1312,7 @@ export default function App() {
               onClick={handleRunCode}
               disabled={!editorEnabled || loading}
               style={{
-                background: (editorEnabled && !loading) ? '#4caf50' : '#3a3a3a',
+                background: (editorEnabled && !loading) ? 'var(--accent)' : '#3a3a3a',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '8px',
@@ -1353,7 +1353,7 @@ export default function App() {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 pointerEvents: 'none',
               }}>
-                <span style={{ color: taskJustCompleted ? '#4caf50' : '#aaa', fontSize: '1rem', background: 'rgba(30,30,30,0.88)', padding: '12px 24px', borderRadius: '10px', border: '1px solid #3a3a3a' }}>
+                <span style={{ color: taskJustCompleted ? 'var(--accent)' : '#aaa', fontSize: '1rem', background: 'rgba(30,30,30,0.88)', padding: '12px 24px', borderRadius: '10px', border: '1px solid #3a3a3a' }}>
                   {taskJustCompleted ? 'Η άσκηση ολοκληρώθηκε! Περίμενε την επόμενη.' : 'Η άσκηση δεν έχει ξεκινήσει ακόμα.'}
                 </span>
               </div>
