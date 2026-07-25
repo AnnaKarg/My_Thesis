@@ -637,7 +637,25 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     cohort_pct = await _compute_cohort_completion_pct(db, TOTAL_LESSONS)
     mastery_profile = _compute_mastery_profile(user, db_history, struggle_flags, cohort_pct)
 
+    # ΚΡΙΣΙΜΟ: πριν εδώ γινόταν ΠΑΝΤΑ int(time.time()) — κάθε refresh της σελίδας (ή remount του
+    # React component) μέσα στην ΙΔΙΑ συνεδρία δημιουργούσε ΝΕΟ session_id, σπάζοντας μία συνεχή
+    # συζήτηση σε πολλές μονο-μηνυματικές "συνεδρίες" στο Ιστορικό — επιβεβαιώθηκε με άμεση δοκιμή.
+    # Αν το τελευταίο μήνυμα είναι πρόσφατο (ίδιο "κάθισμα"), συνεχίζουμε το ίδιο session_id αντί
+    # να το κατακερματίσουμε. Μόνο μετά από πραγματικό διάλειμμα ξεκινάει νέο session_id.
+    _SESSION_IDLE_THRESHOLD_SECONDS = 30 * 60
     new_session_id = int(time.time())
+    if db_history:
+        last_msg = db_history[-1]
+        if last_msg.session_id and last_msg.session_id > 0:
+            try:
+                last_dt = datetime.fromisoformat(last_msg.created_at)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                idle_seconds = (datetime.now(timezone.utc) - last_dt).total_seconds()
+            except Exception:
+                idle_seconds = float("inf")
+            if idle_seconds < _SESSION_IDLE_THRESHOLD_SECONDS:
+                new_session_id = last_msg.session_id
     db.add(ChatHistory(
         user_id=user.id,
         role="ai",

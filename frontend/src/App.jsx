@@ -1073,7 +1073,7 @@ export default function App() {
               onClick={e => e.stopPropagation()}>
               <strong style={{ color: '#eee', fontSize: '1rem', display: 'block', marginBottom: '10px' }}>Έχεις ενεργή άσκηση</strong>
               <p style={{ color: '#aaa', fontSize: '0.9rem', lineHeight: '1.5', margin: '0 0 22px' }}>
-                Αν πας στην αρχική σελίδα, η άσκηση θα σταματήσει και θα πρέπει να πάρεις νέα. Θέλεις να συνεχίσεις;
+                Αν πας στην αρχική σελίδα, η τρέχουσα άσκηση θα διακοπεί — το σερί σου όμως διατηρείται κανονικά. Θέλεις να συνεχίσεις;
               </p>
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
                 <button
