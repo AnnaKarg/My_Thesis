@@ -1,5 +1,5 @@
 import sys
-if sys.stdout.encoding != "utf-8": # Αποτρέπει UnicodeEncodeError σε Windows console (cp1252) όταν τυπώνονται Ελληνικά
+if sys.stdout.encoding != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
@@ -11,7 +11,6 @@ import uvicorn
 
 app = FastAPI(title="AI Python Tutor API")
 
-# Custom CORS middleware — χειρίζεται ρητά τα OPTIONS preflight requests
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
     if request.method == "OPTIONS":

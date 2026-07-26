@@ -1,11 +1,11 @@
-from langgraph.graph import StateGraph, START # Κλάση που ορίζει τη ροή του προγράμματος με βάση την κατάσταση του πράκτορα
-from core.state import AgentState # Κλάση που ορίζει την κατάσταση του πράκτορα
-from agents.mentor import mentoring_node # Κύρια συνάρτηση που διαχειρίζεται τη λογική του Mentor βάσει του τρέχοντος state
-from agents.debugger import debugging_node # Κύρια συνάρτηση που διαχειρίζεται τη λογική του Debugger βάσει του τρέχοντος state
-from agents.assessor import assessment_node # Κύρια συνάρτηση που διαχειρίζεται τη λογική του Assessor βάσει του τρέχοντος state
+from langgraph.graph import StateGraph, START
+from core.state import AgentState
+from agents.mentor import mentoring_node
+from agents.debugger import debugging_node
+from agents.assessor import assessment_node
 
 
-def input_router(state: AgentState): # Συνάρτηση που καθορίζει ποιον κόμβο θα επισκεφθεί ο πράκτορας με βάση την τρέχουσα κατάσταση
+def input_router(state: AgentState):
     messages = state.get("messages", [])
     student_code = state.get("student_code", "").strip()
 
@@ -18,21 +18,21 @@ def input_router(state: AgentState): # Συνάρτηση που καθορίζ�
     return "mentor"
 
 
-def debugger_router(state: AgentState): # Μετά τον debugger: Button 3 (free_check_mode) παρακάμπτει εντελώς τον assessor
+def debugger_router(state: AgentState):
     if state.get("free_check_mode"):
         return "mentor"
     return "assessor"
 
 
-workflow = StateGraph(AgentState) # Δημιουργία ενός γράφου κατάστασης που θα διαχειρίζεται την κατάσταση του πράκτορα και τη ροή του προγράμματος
+workflow = StateGraph(AgentState)
 
-workflow.add_node("mentor", mentoring_node) # Προσθήκη του κόμβου "mentor" στον γράφο
-workflow.add_node("debugger", debugging_node)# Προσθήκη του κόμβου "debugger" στον γράφο
-workflow.add_node("assessor", assessment_node) # Προσθήκη του κόμβου "assessor" στον γράφο
+workflow.add_node("mentor", mentoring_node)
+workflow.add_node("debugger", debugging_node)
+workflow.add_node("assessor", assessment_node)
 
-workflow.add_conditional_edges(START, input_router) # Προσθήκη ακμών που καθορίζουν τη ροή του προγράμματος
+workflow.add_conditional_edges(START, input_router)
 
-workflow.add_conditional_edges("debugger", debugger_router) # Κανονικά debugger->assessor, εκτός από free_check_mode (Button 3) όπου πάει κατευθείαν σε mentor
-workflow.add_edge("assessor", "mentor") # Προσθήκη ακμής που καθορίζει ότι μετά τον κόμβο "assessor" θα ακολουθεί ο κόμβος "mentor"
+workflow.add_conditional_edges("debugger", debugger_router)
+workflow.add_edge("assessor", "mentor")
 
-app = workflow.compile() 
+app = workflow.compile()

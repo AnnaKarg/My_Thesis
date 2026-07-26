@@ -6,14 +6,10 @@ import ReactMarkdown from 'react-markdown';
 import { Send, Code2, Play, LogOut, Eye, EyeOff, BookOpen, Zap, FileCode, TriangleAlert } from 'lucide-react';
 import './App.css';
 
-// Τοπικά: direct στο backend. Production (Vercel): μέσω proxy (/backend) — χωρίς CORS
 const _isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const API_BASE = _isLocal ? (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000') : '/backend';
 
 export default function App() {
-  // Σκόπιμα ΔΕΝ διαβάζουμε/αποθηκεύουμε στο localStorage — για λόγους ασφαλείας η εφαρμογή δεν
-  // μένει συνδεδεμένη στον τελευταίο χρήστη μετά από reload/κλείσιμο. Κάθε φόρτωση ξεκινά από
-  // την οθόνη σύνδεσης, ανεξάρτητα από προηγούμενη συνεδρία σε αυτόν τον browser.
   const [user, setUser] = useState(null);
   const [currentView, setCurrentView] = useState(null);
   const [courseCompleted, setCourseCompleted] = useState(false);
@@ -26,14 +22,12 @@ export default function App() {
   const [pendingFreshTaskOnReturn, setPendingFreshTaskOnReturn] = useState(false);
   const [showLeaveFreeCheckConfirm, setShowLeaveFreeCheckConfirm] = useState(false);
   const [showLeavePracticeConfirm, setShowLeavePracticeConfirm] = useState(false);
-  // Button 3 — ελεύθερος έλεγχος κώδικα (χωρίς βαθμολόγηση, ξεχωριστό από τη ροή μαθημάτων)
   const [freeCheckCode, setFreeCheckCode] = useState('');
   const [freeCheckDescription, setFreeCheckDescription] = useState('');
   const [freeCheckResponse, setFreeCheckResponse] = useState(null);
   const [freeCheckLoading, setFreeCheckLoading] = useState(false);
   const [freeCheckError, setFreeCheckError] = useState('');
   const FREE_CHECK_MAX_CHARS = 2000;
-  // Button 2 — Εξάσκηση (πραγματική βαθμολόγηση, ξεχωριστό από τη σειριακή ροή μαθημάτων)
   const [practiceSelectedLessonIds, setPracticeSelectedLessonIds] = useState([]);
   const [practiceCurrentTask, setPracticeCurrentTask] = useState(null); // {task, success_criteria, lesson_id, lesson_title, difficulty}
   const [practiceCode, setPracticeCode] = useState('');
@@ -43,9 +37,6 @@ export default function App() {
   const [practiceError, setPracticeError] = useState('');
   const [practiceStreakCurrent, setPracticeStreakCurrent] = useState(0);
   const [practiceStreakGoal, setPracticeStreakGoal] = useState(0);
-  // Custom tooltip (portal-based, ΟΧΙ position:absolute μέσα στο modal) — το native title ήταν
-  // αναξιόπιστο/αργό, και το πρώτο absolute-positioned πείραμα έκοβε πάνω/πλάγια από το modal
-  // overflow. Με portal στο document.body + fixed coordinates, ΔΕΝ κόβεται ποτέ από κανένα container.
   const [struggleTooltip, setStruggleTooltip] = useState(null); // {id, top, left, placement}
   const [isRegistering, setIsRegistering] = useState(false);
   const [authForm, setAuthForm] = useState({ username: '', password: '' });
@@ -65,8 +56,7 @@ export default function App() {
   const [lastActivityTime, setLastActivityTime] = useState(null); // τελευταία ενέργεια (start ή υποβολή)
   const [experienceLevel, setExperienceLevel] = useState('beginner');
   const [masteryProfile, setMasteryProfile] = useState([]);
-  // Adaptive hint timer: beginner χρειάζεται περισσότερο χρόνο (Cognitive Load Theory)
-  // expert: 40s/60s/90s (αδιέξοδο εντοπίζεται γρηγορότερα), beginner: 70s/90s/120s
+  // Adaptive hint timer (Cognitive Load Theory): expert 40s/60s/90s, beginner 70s/90s/120s
   const HINT_DELAYS = experienceLevel === 'expert'
     ? [40000, 60000, 90000]
     : [70000, 90000, 120000];
@@ -74,8 +64,6 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [loading, setLoading] = useState(false);
-  // Ref ώστε το timer callback να βλέπει την τρέχουσα τιμή loading
-  // (το state δεν διαβάζεται σωστά μέσα σε stale closures setTimeout)
   const loadingRef = useRef(false);
   const chatEndRef = useRef(null);
   const monacoEditorRef = useRef(null);
@@ -124,8 +112,6 @@ export default function App() {
       if (res.data.experience_level) setExperienceLevel(res.data.experience_level);
       if (res.data.mastery_profile) setMasteryProfile(res.data.mastery_profile);
     } catch (err) {
-      // Μία επανάληψη πριν παραδοθούμε στο fallback μήνυμα — καλύπτει παροδικά network hiccups
-      // ώστε να μη χάνεται σιωπηλά ολόκληρο το welcome payload (μαζί με το mastery_profile).
       if (!isRetry) {
         return bootstrapSession(targetUser, true);
       }
@@ -138,14 +124,14 @@ export default function App() {
     try {
       const res = await axios.get(`${API_BASE}/history/${user.id}/sessions`);
       setHistorySessions(res.data.filter(s => s.session_id !== currentSessionId));
-    } catch { /* ignore */ }
+    } catch {}
   };
 
   const openSessionModal = async (session) => {
     try {
       const res = await axios.get(`${API_BASE}/history/${user.id}/sessions/${session.session_id}`);
       setHistoryModal({ title: formatSessionDate(session.created_at), messages: res.data.messages });
-    } catch { /* ignore */ }
+    } catch {}
   };
 
   useEffect(() => {
@@ -154,8 +140,6 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Ενεργός καθαρισμός τυχόν παλιού python_user_data από πριν αυτή η επιλογή ασφαλείας υπάρξει —
-  // ώστε να μη μείνει κανένα ίχνος προηγούμενου χρήστη στον browser.
   useEffect(() => {
     localStorage.removeItem('python_user_data');
   }, []);
@@ -170,10 +154,6 @@ export default function App() {
     }
   }, [user, currentView]);
 
-  // Μετά από εγκατάλειψη ενεργής άσκησης (βλ. handleConfirmLeaveTask), ΔΕΝ καθαρίζουμε τη
-  // συζήτηση — μένουμε στην ίδια. Μόλις ο μαθητής ξαναμπεί στο κεφάλαιο, ζητάμε μόνοι μας μια
-  // καινούρια άσκηση (ίδιο μηχανισμό με "θέλω άλλη άσκηση") και προστίθεται σαν συνέχεια της
-  // ίδιας συνομιλίας, όχι σαν νέο ξεκίνημα.
   useEffect(() => {
     if (user && currentView === 'mentor' && pendingFreshTaskOnReturn) {
       setPendingFreshTaskOnReturn(false);
@@ -181,10 +161,6 @@ export default function App() {
     }
   }, [user, currentView, pendingFreshTaskOnReturn]);
 
-  // Η "Η πρόοδός μου" ενότητα ζωντανεύει ξανά κάθε φορά που δείχνουμε την αρχική σελίδα —
-  // ανεξάρτητα από το αν έχει ανοίξει ποτέ η συζήτηση. Χωρίς αυτό, το mastery_profile έμενε
-  // παγωμένο στην τιμή της πρώτης φοράς που μπήκε στη συζήτηση (ή έλειπε εντελώς αν δεν είχε
-  // μπει ποτέ), ακόμα κι αν ο μαθητής μόλις είχε ολοκληρώσει μια ενότητα.
   useEffect(() => {
     if (!user || (currentView !== 'landing' && currentView !== 'practice')) return;
     axios.get(`${API_BASE}/session/${user.id}/progress`)
@@ -194,11 +170,10 @@ export default function App() {
         if (typeof res.data.practice_streak_current === 'number') setPracticeStreakCurrent(res.data.practice_streak_current);
         if (typeof res.data.practice_streak_goal === 'number') setPracticeStreakGoal(res.data.practice_streak_goal);
       })
-      .catch(() => { /* σιωπηλή αποτυχία — δεν χαλάει η υπόλοιπη σελίδα */ });
+      .catch(() => {});
   }, [user, currentView]);
 
-  // Wake-up ping: μόλις εμφανιστεί το login, στέλνουμε ένα GET στο backend
-  // ώστε το Render να ξυπνήσει πριν ο χρήστης πατήσει Εγγραφή/Σύνδεση
+  // Wake-up ping: ξυπνάει το Render backend πριν ο χρήστης πατήσει Εγγραφή/Σύνδεση
   useEffect(() => {
     if (!user) {
       axios.get(`${API_BASE}/`).catch(() => {});
@@ -242,8 +217,6 @@ export default function App() {
         setAuthError('Το όνομα χρήστη υπάρχει ήδη. Δοκίμασε διαφορετικό.');
         setAuthLoading(false);
       } else if (!isRetry) {
-        // Πιθανό Render cold-start (~50s) — μία αυτόματη επανάληψη πριν δείξουμε τελικό σφάλμα,
-        // ίδια λογική με το bootstrapSession retry. authLoading ΠΑΡΑΜΕΝΕΙ true μέχρι την επανάληψη.
         setAuthError('Ο server ξυπνάει (Render cold start) — μια στιγμή ακόμα...');
         setTimeout(() => handleAuth(true), 6000);
       } else {
@@ -266,9 +239,6 @@ export default function App() {
     setLastActivityTime(null);
     localStorage.removeItem('python_user_data');
     setMessages([]);
-    // Καθαρίζουμε και το ιστορικό από το React state (όχι μόνο localStorage) — χωρίς αυτό,
-    // μια αποσύνδεση/επανασύνδεση εντός της ίδιας καρτέλας (χωρίς ριφρές) άφηνε το sidebar
-    // με μπαγιάτικα δεδομένα από πριν την αποσύνδεση, μέχρι να γίνει χειροκίνητο refresh.
     setCurrentSessionId(0);
     setHistorySessions([]);
     setShowHistorySidebar(false);
@@ -411,10 +381,7 @@ export default function App() {
     if (user?.id) {
       try {
         await axios.post(`${API_BASE}/session/${user.id}/abandon_task`);
-      } catch (err) {
-        // Δεν μπλοκάρουμε την πλοήγηση αν αποτύχει το καθάρισμα στο backend — στη χειρότερη
-        // περίπτωση η άσκηση θα ξαναχρησιμοποιηθεί την επόμενη φορά, όπως συμβαίνει ήδη σήμερα.
-      }
+      } catch (err) {}
     }
     setShowEditor(false);
     setEditorEnabled(false);
@@ -427,9 +394,6 @@ export default function App() {
     setCurrentView('landing');
   };
 
-  // Καλείται μόνο του (χωρίς ορατό μήνυμα μαθητή) όταν ο μαθητής ξαναμπαίνει στο κεφάλαιο μετά
-  // από εγκατάλειψη άσκησης — ζητά νέα παραλλαγή στο ΙΔΙΟ κεφάλαιο (ίδιος μηχανισμός με "θέλω
-  // άλλη άσκηση") και προσθέτει μόνο την απάντηση του Mentor στη συζήτηση, χωρίς να τη σβήσει.
   const requestFreshTaskAfterAbandon = async () => {
     if (!user?.id) return;
     loadingRef.current = true;
@@ -445,7 +409,6 @@ export default function App() {
       });
       setMessages(prev => [...prev, { role: 'ai', content: res.data.mentor_response }]);
     } catch (err) {
-      // Αν αποτύχει, ο μαθητής μπορεί απλά να ζητήσει άσκηση κανονικά μέσω chat.
     } finally {
       loadingRef.current = false;
       setLoading(false);
@@ -463,15 +426,12 @@ export default function App() {
     setLastActivityTime(now);
     const resetComment = '# Γράψε τον κώδικά σου εδώ...';
     setCode(resetComment);
-    // Καθαρίζουμε τον editor χωρίς να επηρεαστεί η θέση cursor (uncontrolled mode)
     if (monacoEditorRef.current) {
       monacoEditorRef.current.setValue(resetComment);
     }
   };
 
   const requestNoSubmissionHint = async (stage) => {
-    // Χρησιμοποιούμε loadingRef (όχι state) γιατί το setTimeout callback
-    // κλείνει πάνω σε stale τιμή — το ref ενημερώνεται συγχρονικά.
     if (!user?.id || !taskActive || loadingRef.current) return;
 
     loadingRef.current = true;
@@ -496,11 +456,10 @@ export default function App() {
       loadingRef.current = false;
       setLoading(false);
       setHintStage(stage + 1);
-      setLastActivityTime(Date.now()); // επαναφορά χρόνου για το επόμενο hint
+      setLastActivityTime(Date.now());
     }
   };
 
-  // Multi-stage timeout: πυροδοτεί σειριακά hints με αυξανόμενο delay
   useEffect(() => {
     if (!taskActive || !lastActivityTime || hintStage >= HINT_DELAYS.length) return;
 
@@ -524,8 +483,6 @@ export default function App() {
     loadingRef.current = true;
     setLoading(true);
     if (!overrideMessage) setChatInput('');
-    // Επαναφορά timer υπόδειξης όταν ο μαθητής στέλνει μήνυμα chat
-    // (αποτρέπει αυτόματα hints να εμφανίζονται ενώ ο μαθητής κάνει ερωτήσεις)
     if (taskActive) setLastActivityTime(Date.now());
 
     try {
@@ -545,9 +502,8 @@ export default function App() {
   const handleRunCode = async () => {
     loadingRef.current = true;
     setLoading(true);
-    setHintStage(HINT_DELAYS.length); // παύση timer κατά τη διάρκεια της υποβολής
+    setHintStage(HINT_DELAYS.length);
     const timeSpent = startTime ? (Date.now() - startTime) / 1000 : 0;
-    // Χρησιμοποιούμε το ref για αξιόπιστη ανάγνωση (uncontrolled editor)
     const codeToSubmit = monacoEditorRef.current ? monacoEditorRef.current.getValue() : (typeof code === 'string' ? code : '');
     const submissionMessage = codeToSubmit.trim()
       ? `Υποβολή κώδικα:\n\`\`\`python\n${codeToSubmit}\n\`\`\``
@@ -578,7 +534,6 @@ export default function App() {
       }
 
       if (isCorrect || responseComplete) {
-        // Σωστή λύση → κλείδωμα editor μέχρι το κουμπί της επόμενης άσκησης
         setStartTime(null);
         setTaskActive(false);
         setEditorEnabled(false);
@@ -586,7 +541,6 @@ export default function App() {
         setHintStage(0);
         setLastActivityTime(null);
       } else {
-        // Λανθασμένη υποβολή → επαναφορά timer (αρχίζει ξανά από hint 1)
         const now = Date.now();
         setHintStage(0);
         setLastActivityTime(now);
@@ -602,7 +556,6 @@ export default function App() {
     return (
       <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#121212', color: 'white', padding: '16px', overflowY: 'auto' }}>
 
-        {/* ── Modal επιτυχούς εγγραφής ── */}
         {registerSuccessModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 }}>
             <div style={{ background: '#1e1e1e', border: '1px solid var(--accent)', borderRadius: '10px', padding: '40px 48px', textAlign: 'center', maxWidth: '420px', boxShadow: '0 8px 32px rgba(0,0,0,0.7)' }}>
@@ -626,7 +579,6 @@ export default function App() {
             {isRegistering ? 'Δημιούργησε λογαριασμό για να ξεκινήσεις' : 'Συνδέσου για να γνωρίσεις τον κόσμο της Python.'}
           </p>
 
-          {/* Username */}
           <input
             style={{ width: '100%', padding: '14px 16px', marginBottom: '14px', borderRadius: '10px', border: '1px solid #444', background: '#2a2a2a', color: 'white', boxSizing: 'border-box', fontSize: '1.05rem' }}
             placeholder="Όνομα χρήστη"
@@ -635,7 +587,6 @@ export default function App() {
             onKeyDown={e => e.key === 'Enter' && handleAuth()}
           />
 
-          {/* Password με toggle ορατότητας */}
           <div style={{ position: 'relative', marginBottom: '24px' }}>
             <input
               type={showPassword ? 'text' : 'password'}
@@ -681,7 +632,6 @@ export default function App() {
 
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#121212', color: 'white', display: 'flex', flexDirection: 'column', fontFamily: 'var(--font-body)', overflowY: 'auto' }}>
-        {/* Header */}
         <div style={{ padding: '20px 28px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #2a2a2a', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <Code2 size={22} color="var(--accent)" />
@@ -692,9 +642,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* Main — flex-start (ΟΧΙ center) ώστε το greeting+κάρτες να μένουν σε σταθερή θέση
-            ανεξάρτητα από το αν φόρτωσε ή όχι το mastery_profile· αλλιώς το centering μετατοπίζει
-            ΟΛΟ το block κάθε φορά που αλλάζει το συνολικό του ύψος. */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', padding: '140px 20px 40px' }}>
           <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 2.2rem)', marginBottom: '8px', textAlign: 'center', fontWeight: 700 }}>
             {greeting}, {user.username}!
@@ -705,7 +652,6 @@ export default function App() {
 
           <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '960px', width: '100%' }}>
 
-            {/* Κάρτα 1: Μαθήματα — ενεργή */}
             <div
               onClick={handleEnterMentor}
               style={{ background: '#1e1e1e', border: '2px solid var(--accent)', borderRadius: '10px', padding: '36px 24px', width: '290px', cursor: 'pointer', textAlign: 'center', transition: 'transform 0.15s, border-color 0.15s', boxSizing: 'border-box' }}
@@ -719,7 +665,6 @@ export default function App() {
               </p>
             </div>
 
-            {/* Κάρτα 2: Εξάσκηση — Button 2, ελεύθερη πρακτική με streak */}
             <div
               onClick={handleEnterPractice}
               style={{ background: '#1e1e1e', border: '2px solid var(--accent)', borderRadius: '10px', padding: '36px 24px', width: '290px', cursor: 'pointer', textAlign: 'center', transition: 'transform 0.15s, border-color 0.15s', boxSizing: 'border-box' }}
@@ -733,7 +678,6 @@ export default function App() {
               </p>
             </div>
 
-            {/* Κάρτα 3: Αξιολόγηση κώδικα — Button 3, ελεύθερος έλεγχος κώδικα */}
             <div
               onClick={handleEnterFreeCheck}
               style={{ background: '#1e1e1e', border: '2px solid var(--accent)', borderRadius: '10px', padding: '36px 24px', width: '290px', cursor: 'pointer', textAlign: 'center', transition: 'transform 0.15s, border-color 0.15s', boxSizing: 'border-box' }}
@@ -748,8 +692,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Open Learner Model — Η πρόοδός μου (Bull & Kay, 2010) — κουμπί αντί για μόνιμα
-              ορατή ενότητα, ώστε να μη μετατοπίζεται το layout ανάλογα με το αν έχει φορτώσει. */}
+          {/* Open Learner Model (Bull & Kay, 2010) */}
           {masteryProfile.length > 0 && (
             <button
               onClick={() => setShowProgressModal(true)}
@@ -762,7 +705,6 @@ export default function App() {
           )}
         </div>
 
-        {/* ── Progress Modal ──────────────────────────────────────────────── */}
         {showProgressModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
             onClick={() => setShowProgressModal(false)}>
@@ -787,8 +729,6 @@ export default function App() {
                               const MARGIN = 10;
                               let left = rect.left + rect.width / 2 - TOOLTIP_WIDTH / 2;
                               left = Math.max(MARGIN, Math.min(left, window.innerWidth - TOOLTIP_WIDTH - MARGIN));
-                              // Πάνω από το εικονίδιο εκτός αν δεν χωράει (κοντά στην κορυφή της οθόνης) —
-                              // τότε κάτω. Portal στο document.body: ΔΕΝ κόβεται από κανένα container.
                               const placement = rect.top < 90 ? 'below' : 'above';
                               const top = placement === 'above' ? rect.top - 8 : rect.bottom + 8;
                               setStruggleTooltip({ id, top, left, placement });
@@ -961,7 +901,6 @@ export default function App() {
         </div>
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          {/* Sidebar: πολλαπλή επιλογή ολοκληρωμένων κεφαλαίων */}
           <div style={{ width: '220px', flexShrink: 0, borderRight: '1px solid #2a2a2a', padding: '20px 14px', overflowY: 'auto' }}>
             <div style={{ color: '#888', fontSize: '0.8rem', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Κεφάλαια</div>
             {completedLessons.length === 0 && (
@@ -989,11 +928,9 @@ export default function App() {
             })}
           </div>
 
-          {/* Main */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <div style={{ width: '100%', maxWidth: '680px' }}>
 
-              {/* Streak — απλή μέτρηση, χωρίς προσωπικό στόχο προς το παρόν */}
               <div style={{ display: 'flex', alignItems: 'center', background: '#1e1e1e', border: '1px solid #333', borderRadius: '12px', padding: '14px 18px', marginBottom: '20px' }}>
                 <span style={{ fontSize: '1.1rem', fontWeight: 700, color: '#eee' }}>
                   Σερί: {practiceStreakCurrent}
@@ -1114,7 +1051,6 @@ export default function App() {
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'flex', backgroundColor: '#1e1e1e', color: 'white', fontFamily: 'var(--font-body)', overflow: 'hidden' }}>
 
-      {/* ── History Modal ────────────────────────────────────────────────── */}
       {historyModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
           onClick={() => setHistoryModal(null)}>
@@ -1137,7 +1073,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Leave Active Task Confirm ────────────────────────────────────── */}
       {showLeaveTaskConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
           onClick={() => setShowLeaveTaskConfirm(false)}>
@@ -1165,7 +1100,6 @@ export default function App() {
         </div>
       )}
 
-      {/* ── History Sidebar ──────────────────────────────────────────────── */}
       {showHistorySidebar && !isMobile && (
         <div style={{ width: '210px', flexShrink: 0, background: '#1a1a1a', borderRight: '1px solid #2a2a2a', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '14px 16px', borderBottom: '1px solid #2a2a2a', fontSize: '0.85rem', color: '#888', fontWeight: 'bold', flexShrink: 0 }}>

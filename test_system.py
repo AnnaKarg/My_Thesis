@@ -13,7 +13,6 @@ test_system.py — Σύστημα ελέγχου AI Python Tutor
 import asyncio, sys, time
 from langchain_core.messages import HumanMessage, AIMessage
 
-# ── Terminal colors ──────────────────────────────────────────────────────────
 GREEN  = "\033[92m"
 RED    = "\033[91m"
 YELLOW = "\033[93m"
@@ -22,7 +21,6 @@ BOLD   = "\033[1m"
 DIM    = "\033[2m"
 RESET  = "\033[0m"
 
-# ── Καταμέτρηση αποτελεσμάτων ────────────────────────────────────────────────
 _passed   = 0
 _failed   = 0
 _failures = []
@@ -45,7 +43,6 @@ def section(title):
     print(f"{BOLD}{CYAN}  {title}{RESET}")
     print(f"{BOLD}{CYAN}{'─'*58}{RESET}")
 
-# ── Βοηθητικά για state ──────────────────────────────────────────────────────
 TASK = (
     "Δημιούργησε μεταβλητή age με τιμή 25 και μεταβλητή "
     "first_name ως string. Τύπωνε και τις δύο με print()."
@@ -93,22 +90,15 @@ def H(text): return HumanMessage(content=text)
 def A(text): return AIMessage(content=text)
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# Α) UNIT TESTS — χωρίς LLM, τρέχουν instant
-# ════════════════════════════════════════════════════════════════════════════
 def run_unit_tests():
     from agents.mentor import _is_gibberish, _new_lesson_theory_shown, _task_already_presented
-    # _count_hints και _infer_awaiting_questions είναι στο api.routes
-    # τα εισάγουμε με monkey-patch αφού δεν έχουν side-effects
     from api import routes as _r
     _count_hints             = _r._count_hints
     _infer_awaiting_questions = _r._infer_awaiting_questions
 
-    # ── _is_gibberish ────────────────────────────────────────────────────
     section("Α1) _is_gibberish")
 
     should_be_gibberish = [
-        # Ελληνικά
         ("σρυξδτ",  "Greek: 3+ συνεχόμενα σύμφωνα (ξδτ)"),
         ("ααααα",   "Greek: ίδιο φωνήεν × 5"),
         ("οοοο",    "Greek: ίδιο φωνήεν × 4"),
@@ -117,7 +107,6 @@ def run_unit_tests():
         ("α",       "μόνο 1 χαρακτήρας"),
         ("f",       "μόνο 1 χαρακτήρας (Latin)"),
         ("",        "κενό string"),
-        # Latin gibberish
         ("sdfgh",   "Latin: χωρίς φωνήεντα"),
         ("qwrty",   "Latin: χωρίς φωνήεντα"),
         ("ddsdsd",  "Latin: χωρίς φωνήεντα"),
@@ -148,7 +137,6 @@ def run_unit_tests():
         else:
             fail(f'not gibberish("{text}") → False expected [{desc}]')
 
-    # ── _new_lesson_theory_shown ─────────────────────────────────────────
     section("Α2) _new_lesson_theory_shown")
 
     cases = [
@@ -164,7 +152,6 @@ def run_unit_tests():
         else:
             fail(f"theory_shown={expected} expected (got {result}) [{desc}]")
 
-    # ── _task_already_presented ──────────────────────────────────────────
     section("Α3) _task_already_presented")
 
     cases2 = [
@@ -179,7 +166,6 @@ def run_unit_tests():
         else:
             fail(f"task_presented={expected} expected (got {result}) [{desc}]")
 
-    # ── _count_hints ─────────────────────────────────────────────────────
     section("Α4) _count_hints")
 
     class FakeH:
@@ -195,7 +181,7 @@ def run_unit_tests():
     ]
     h_from_prev_task = [
         FakeH("ai","OLD\n[HINT]"), FakeH("ai","OLD\n[HINT]"), FakeH("ai","OLD\n[HINT]"),
-        FakeH("ai","[BUTTON:START_TASK]"),        # ← νέα άσκηση ξεκινά εδώ
+        FakeH("ai","[BUTTON:START_TASK]"),
         FakeH("human","code"), FakeH("ai","[HINT]"),
     ]
 
@@ -210,7 +196,6 @@ def run_unit_tests():
         else:
             fail(f"_count_hints={expected} expected (got {result}) [{desc}]")
 
-    # ── _infer_awaiting_questions ─────────────────────────────────────────
     section("Α5) _infer_awaiting_questions")
 
     for history, pc, ts, expected, desc in [
@@ -227,36 +212,27 @@ def run_unit_tests():
             fail(f"awaiting={expected} expected (got {result}) [{desc}]")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# Β) INTENT CLASSIFICATION — LLM, ~30 δευτ.
-# ════════════════════════════════════════════════════════════════════════════
 def run_intent_tests():
     from agents.mentor import _classify_intent
 
     section("Β) INTENT CLASSIFICATION (LLM)")
 
     cases = [
-        # (input, profile_checked, task_started, expected, desc)
-
-        # Gibberish → always "other"
         ("σρυξδτ",          False, False, "other",          "Greek consonant cluster"),
         ("ααααα",           False, False, "other",          "Same vowel ×5"),
         ("f",               False, False, "other",          "Single char"),
 
-        # Πριν profile check
         ("Ναι",             False, False, "profile_yes",    "Affirmative πριν profile"),
         ("όχι ποτέ",        False, False, "profile_no",     "Negative πριν profile"),
         ("δεν έχω εμπειρία",False, False, "profile_no",     "No experience"),
         ("λίγο",            False, False, "profile_yes",    "Some experience"),
 
-        # Μετά profile, θεωρία
         ("Ναι πάμε!",       True,  False, "wants_task",     "Θέλει άσκηση"),
         ("κατάλαβα",        True,  False, "wants_task",     "Understood → wants task"),
         ("δεν έχω απορία",  True,  False, "wants_task",     "No questions"),
         ("τι είναι string;",True,  False, "theory_question","Theory question"),
         ("πώς λειτουργεί το if;", True, True, "theory_question","Theory Q during task"),
 
-        # Κατά τη διάρκεια άσκησης
         ("δεν καταλαβαίνω το λάθος", True, True, "theory_question", "Asks for help → theory_question (per prompt)"),
         ("1",               True,  True,  "other",          "Menu σβήστηκε — μονοψήφιο '1' είναι πλέον gibberish/other"),
         ("2",               True,  True,  "other",          "Menu σβήστηκε — μονοψήφιο '2' είναι πλέον gibberish/other"),
@@ -274,9 +250,6 @@ def run_intent_tests():
             fail(f'"{inp}" → {expected} expected (got {result!r}) [{desc}]')
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# Γ) PIPELINE INTEGRATION — debugger+assessor+mentor, ~3 λεπτά
-# ════════════════════════════════════════════════════════════════════════════
 async def run_pipeline_tests():
     from core.app import app as graph
 
@@ -309,14 +282,13 @@ async def run_pipeline_tests():
         except Exception as e:
             fail(label, str(e))
 
-    # ── Γ1. Profile flow ─────────────────────────────────────────────────
     print(f"\n  {BOLD}Γ1. Profile flow{RESET}")
 
     await chk(
         "Gibberish (σρυξδτ) πριν profile → επαναφορά ερώτησης",
         mkstate(is_first_login=True, profile_checked=False,
                 messages=[H("σρυξδτ")]),
-        must=["κώδικα"],   # welcome ή re-ask — και τα δύο αναφέρουν "κώδικα"
+        must=["κώδικα"],
         must_not=["[AWAITING_QUESTIONS]", "[BUTTON:START_TASK]"]
     )
 
@@ -343,10 +315,9 @@ async def run_pipeline_tests():
         must=["[BUTTON:START_TASK]"]
     )
 
-    # ── Γ2. Κώδικας: Debugger + Assessor ─────────────────────────────────
     print(f"\n  {BOLD}Γ2. Κώδικας (Debugger + Assessor){RESET}")
 
-    BAD1 = "pritn('hello')"   # NameError — debugger πιάνει
+    BAD1 = "pritn('hello')"
     await chk(
         "Λάθος κώδικας (typo pritn) → hint, ΌΧΙ 'δεν κατάλαβα'",
         mkstate(task_started=True, student_code=BAD1,
@@ -356,7 +327,7 @@ async def run_pipeline_tests():
         must_not=["Δεν κατάλαβα", "Θα ήμουν", "[ASSESSMENT:ADVANCE]"]
     )
 
-    BAD2 = 'age = 25\nprint(age)'   # Λείπει first_name + print(first_name)
+    BAD2 = 'age = 25\nprint(age)'
     await chk(
         "Ελλιπής κώδικας (λείπει first_name) → repeat",
         mkstate(task_started=True, student_code=BAD2,
@@ -386,7 +357,6 @@ async def run_pipeline_tests():
         must_not=["[ASSESSMENT:ADVANCE]", "Δεν κατάλαβα"]
     )
 
-    # ── Γ3. Συνομιλία ────────────────────────────────────────────────────
     print(f"\n  {BOLD}Γ3. Συνομιλία{RESET}")
 
     await chk(
@@ -424,7 +394,6 @@ async def run_pipeline_tests():
         must_not=["[ASSESSMENT:ADVANCE]"]
     )
 
-    # ── Γ4. Περίεργα inputs ───────────────────────────────────────────────
     print(f"\n  {BOLD}Γ4. Περίεργα / edge-case inputs{RESET}")
 
     await chk(
@@ -446,9 +415,6 @@ async def run_pipeline_tests():
     )
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# MAIN
-# ════════════════════════════════════════════════════════════════════════════
 def _print_summary():
     total = _passed + _failed
     color = GREEN if _failed == 0 else RED
@@ -466,11 +432,9 @@ if __name__ == "__main__":
     print(f"{BOLD}  AI PYTHON TUTOR — SYSTEM TESTS{RESET}")
     print(f"{BOLD}{'═'*58}{RESET}")
 
-    # Sync phases (unit + LLM intent classification) — εκτελούνται ΠΡΙΝ το event loop
     run_unit_tests()
     run_intent_tests()
 
-    # Async phase (full pipeline) — ξεχωριστό event loop
     asyncio.run(run_pipeline_tests())
 
     _print_summary()

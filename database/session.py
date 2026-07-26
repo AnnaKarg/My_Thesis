@@ -84,8 +84,6 @@ async def init_db():
                 "ALTER TABLE chat_histories ADD COLUMN IF NOT EXISTS session_id INTEGER DEFAULT 0",
                 "ALTER TABLE chat_histories ADD COLUMN IF NOT EXISTS created_at TEXT DEFAULT ''",
                 "CREATE INDEX IF NOT EXISTS ix_chat_histories_session_id ON chat_histories (session_id)",
-                # users: ίδιες στήλες με το SQLite migration list παραπάνω — έλειπαν εντελώς εδώ,
-                # προκαλώντας 500 σε ΚΑΘΕ query πάνω στο User (login/register/chat) στο production.
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_checked BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS active_task_lesson_id INTEGER DEFAULT 0",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS active_task_text TEXT DEFAULT ''",

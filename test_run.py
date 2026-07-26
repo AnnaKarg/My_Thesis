@@ -4,20 +4,16 @@ from langchain_core.messages import HumanMessage
 def test_logic():
 
     state = {
-        # ── Μηνύματα ──────────────────────────────────────────────────────────
         "messages": [HumanMessage(content="Γεια σου! Είμαι έτοιμη για το πρώτο task.")],
 
-        # ── Κώδικας & Debug ───────────────────────────────────────────────────
-        "student_code": "mpla = 'milo' ; print(milo)",  # Επίτηδες λάθος
+        "student_code": "mpla = 'milo' ; print(milo)",  # επίτηδες λάθος
         "debug_report": "",
 
-        # ── Αξιολόγηση ────────────────────────────────────────────────────────
         "is_correct": False,
         "assessment_feedback": "",
         "assessment_score": 0,
         "assessment_decision": "repeat",
 
-        # ── Μάθημα & Άσκηση ───────────────────────────────────────────────────
         "current_lesson": "Variables & Data Types",
         "current_lesson_id": 1,
         "current_task": "Δημιούργησε μεταβλητή age με τιμή 25 και μεταβλητή first_name ως string. Τύπωνε και τις δύο με print().",
@@ -29,18 +25,15 @@ def test_logic():
             "Δεν υπάρχουν συντακτικά λάθη."
         ],
 
-        # ── Προφίλ & Επίδοση ──────────────────────────────────────────────────
         "experience_level": "beginner",
         "profile_checked": True,
         "performance_summary": '{"total_attempts": 1, "avg_time_spent": 0, "frequent_error_categories": [], "recent_attempts": 1}',
         "understanding_level": "developing",
 
-        # ── Μετρητές ──────────────────────────────────────────────────────────
         "attempts_count": 1,
         "hint_count": 0,
         "time_spent": 15.0,
 
-        # ── Κατάσταση συνεδρίας ────────────────────────────────────────────────
         "task_started": True,
         "awaiting_questions": False,
         "event_type": "",

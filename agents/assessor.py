@@ -1,4 +1,4 @@
-import ast # Για deterministic έλεγχο κριτηρίων
+import ast
 import json
 import re
 from langchain_groq import ChatGroq
@@ -21,7 +21,6 @@ NUMERIC_TARGET_NAMES = {
     "min_val", "max_val", "threshold", "balance", "amount", "weight", "height"
 }
 
-# Ονόματα μεταβλητών που σημασιολογικά πρέπει να έχουν string τιμή
 STRING_TARGET_NAMES = {
     "username", "email", "city", "country", "name", "category",
     "status", "user_status", "label", "message", "description",
@@ -85,7 +84,6 @@ def _extract_expected_from_task(current_task: str):
     name_matches = re.findall(r"(?:όνομα|μεταβλητή|συνάρτηση)\s+([A-Za-z_][A-Za-z0-9_]*)", task)
     expectations["names"].extend(name_matches)
 
-    # Αναγνωρίζει "λίστα X" (π.χ. "λίστα colors") ως αναμενόμενο όνομα μεταβλητής
     for lname in re.findall(r"λίστα\s+([A-Za-z_][A-Za-z0-9_]*)", task, re.IGNORECASE):
         if lname not in expectations["names"]:
             expectations["names"].append(lname)
@@ -109,17 +107,14 @@ def _extract_expected_from_task(current_task: str):
         factor = int(expr_match.group(3))
         expectations["expression_values"].append((left + right) * factor)
 
-    # Specific pattern: "μεταβλητή X ως string" — captures ALL explicitly typed string vars
     for m in re.finditer(r"μεταβλητ[ήη]\s+([A-Za-z_][A-Za-z0-9_]*)\s+ως\s+string", task, re.IGNORECASE):
         vname = m.group(1)
         if vname not in expectations["string_names"]:
             expectations["string_names"].append(vname)
-    # Specific pattern: "μεταβλητή X ως αριθμό/int/float"
     for m in re.finditer(r"μεταβλητ[ήη]\s+([A-Za-z_][A-Za-z0-9_]*)\s+ως\s+(?:αριθμό|int|float|δεκαδ\w*)", task, re.IGNORECASE):
         vname = m.group(1)
         if vname not in expectations["string_names"] and vname not in expectations["numeric_names"]:
             expectations["numeric_names"].append(vname)
-    # Fallback: generic keyword detection (no explicit "μεταβλητή X ως" patterns found)
     if not expectations["string_names"]:
         if "string" in task.lower() or "κείμενο" in task.lower():
             expectations["string_names"].extend(name_matches[:1])
@@ -138,11 +133,7 @@ def _normalize_criteria(success_criteria):
     return ["Ο κώδικας πρέπει να είναι λειτουργικός."]
 
 def _has_reachable_print(tree, func_names, called_names) -> bool:
-    """print() μέσα σε def που ΔΕΝ καλείται ποτέ δεν εκτελείται ποτέ — δεν πρέπει να μετράει
-    σαν πραγματικό print(). Μια FunctionDef θεωρείται 'unreachable' αν το όνομά της δεν
-    εμφανίζεται ποτέ σε κλήση πουθενά στο πρόγραμμα. Απλή, ρεαλιστική προσέγγιση για κώδικα
-    αρχαρίων — δεν λύνει γενικό call-graph reachability, πιάνει ακριβώς το 'def + ξέχασα να
-    την καλέσω', που ήταν αόρατο πριν (has_print περνούσε όλο το δέντρο αδιακρίτως)."""
+    """print() μέσα σε def που δεν καλείται ποτέ δεν εκτελείται ποτέ."""
     uncalled = func_names - called_names
 
     class _Visitor(ast.NodeVisitor):
@@ -202,9 +193,7 @@ def _build_flags(student_code: str):
         "has_list": any(isinstance(n, ast.List) for n in ast.walk(tree)),
         "has_index": any(isinstance(n, ast.Subscript) for n in ast.walk(tree)),
         "list_elem_counts": [len(n.elts) for n in ast.walk(tree) if isinstance(n, ast.List)],
-        # snake_case: κανένα από τα ανατεθειμένα ονόματα δεν περιέχει κεφαλαίο
         "snake_case_ok": all(not any(ch.isupper() for ch in name) for name in assigned_names) if assigned_names else True,
-        # elif: στο AST της Python, ένα elif ΕΙΝΑΙ ένα If φωλιασμένο ως το μοναδικό στοιχείο στο orelse
         "has_elif": any(
             isinstance(n, ast.If) and len(n.orelse) == 1 and isinstance(n.orelse[0], ast.If)
             for n in ast.walk(tree)
@@ -249,12 +238,7 @@ def _criteria_requires_numeric(success_criteria):
     return any(marker in criteria_text for marker in markers)
 
 def _type_mismatch_detected(student_code: str, success_criteria):
-    """Ελέγχει αν γνωστά αριθμητικά ονόματα μεταβλητών (NUMERIC_TARGET_NAMES) έχουν αναθεθεί
-    τιμή-αριθμό γραμμένη ως string (π.χ. age = "25"). Πριν εφαρμοζόταν ΜΟΝΟ στο μάθημα
-    Variables/Data Types — το ίδιο ακριβώς λάθος σε επόμενα μαθήματα (π.χ. score = "80" στις
-    Δομές Ελέγχου) περνούσε εντελώς απαρατήρητο. Το λάθος δεν είναι lesson-specific, οπότε ο
-    έλεγχος γενικεύτηκε σε όλα τα μαθήματα — το NUMERIC_TARGET_NAMES παραμένει το φρένο έναντι
-    ψευδών θετικών (ελέγχονται μόνο γνωστά σημασιολογικά ονόματα, όχι κάθε μεταβλητή)."""
+    """Γνωστά αριθμητικά ονόματα (NUMERIC_TARGET_NAMES) με τιμή γραμμένη ως string, π.χ. age = "25"."""
     numeric_strings = _numeric_string_assignments(student_code)
     if not numeric_strings:
         return False, []
@@ -270,9 +254,7 @@ def _type_mismatch_detected(student_code: str, success_criteria):
 
 
 def _string_mismatch_detected(student_code: str):
-    """Ελέγχει αν γνωστά string-type ονόματα μεταβλητών έχουν αναθεθεί μη-string τιμή.
-    π.χ. email = 12  →  λάθος (πρέπει να είναι string). Γενικευμένο σε όλα τα μαθήματα για τον
-    ίδιο λόγο με το _type_mismatch_detected παραπάνω — το STRING_TARGET_NAMES είναι το φρένο."""
+    """Γνωστά string-type ονόματα (STRING_TARGET_NAMES) με μη-string τιμή, π.χ. email = 12."""
     try:
         tree = ast.parse(student_code)
     except SyntaxError:
@@ -284,7 +266,7 @@ def _string_mismatch_detected(student_code: str):
             continue
         value = _safe_literal_eval(node.value)
         if value is None or isinstance(value, str):
-            continue  # string τιμή ή σύνθετη έκφραση: δεν ελέγχουμε
+            continue
         for target in node.targets:
             if isinstance(target, ast.Name) and target.id in STRING_TARGET_NAMES:
                 violating_vars.append(target.id)
@@ -293,8 +275,7 @@ def _string_mismatch_detected(student_code: str):
 
 
 def _empty_string_list_elements_detected(student_code: str, current_lesson: str):
-    """Ελέγχει αν λίστα περιέχει ΜΟΝΟ κενά strings ('') — π.χ. scores=['','','']. Μόνο για το
-    μάθημα Λιστών. Επιστρέφει (bool, περιγραφή)."""
+    """Λίστα με μόνο κενά strings, π.χ. scores=['','','']. Μόνο για το μάθημα Λιστών."""
     if "Lists" not in current_lesson:
         return False, ""
     try:
@@ -310,7 +291,6 @@ def _empty_string_list_elements_detected(student_code: str, current_lesson: str)
 
 
 def _count_print_calls(student_code: str) -> int:
-    """Μετράει πόσα print() calls υπάρχουν στον κώδικα."""
     try:
         tree = ast.parse(student_code)
     except SyntaxError:
@@ -323,11 +303,7 @@ def _count_print_calls(student_code: str) -> int:
     )
 
 def _get_printed_string_values(student_code: str) -> set:
-    """Επιστρέφει τα literal string ορίσματα που εμφανίζονται σε print() calls.
-    Π.χ. print("High") → {"High"}. Επίσης αναγνωρίζει literal τμήματα μέσα σε f-strings,
-    π.χ. print(f"Τιμή: {x}") → {"Τιμή: "}.
-    Χρησιμοποιείται για να ελέγξουμε αν η εκφώνηση ζητά συγκεκριμένο string output
-    (π.χ. 'High'/'Low') και ο μαθητής το έχει αντεστραμμένο."""
+    """Literal string ορίσματα σε print() calls, μαζί με literal τμήματα μέσα σε f-strings."""
     try:
         tree = ast.parse(student_code)
     except SyntaxError:
@@ -345,12 +321,7 @@ def _get_printed_string_values(student_code: str) -> set:
     return printed
 
 def _get_printed_var_names(student_code: str) -> set:
-    """Επιστρέφει το σύνολο ονομάτων μεταβλητών που εμφανίζονται ως ορίσματα σε print() calls.
-    Π.χ. print(age) και print(name) → {"age", "name"}.
-    Π.χ. print(age) και print(age) → {"age"} — δύο prints, μία μεταβλητή.
-    Αναγνωρίζει ΚΑΙ μεταβλητές μέσα σε f-strings, π.χ. print(f"{age} χρονών") → {"age"} —
-    χωρίς αυτό, κάθε f-string print εμφανιζόταν σαν να μην τυπώνει καμία από τις ζητούμενες
-    μεταβλητές, προκαλώντας ψευδές 'λείπει το print()' εύρημα σε απολύτως σωστό κώδικα."""
+    """Ονόματα μεταβλητών που εμφανίζονται ως ορίσματα σε print() calls, μαζί με ό,τι είναι μέσα σε f-strings."""
     try:
         tree = ast.parse(student_code)
     except SyntaxError:
@@ -369,13 +340,8 @@ def _get_printed_var_names(student_code: str) -> set:
 
 
 def _if_else_direction_mismatch(student_code: str, current_task: str):
-    """Best-effort ντετερμινιστικός έλεγχος αντεστραμμένης λογικής σε απλό if/else (π.χ. task:
-    'μεγαλύτερη από 50 → τύπωνε High, αλλιώς → Low', κώδικας: τυπώνει Low όταν είναι μεγαλύτερη).
-    Πριν αυτό ήταν εντελώς αόρατο στο _strict_task_matching — ελεγχόταν μόνο ΟΤΙ και τα δύο
-    strings υπάρχουν κάπου στον κώδικα, ΟΧΙ σε ποιον κλάδο. Πρόσθετο σήμα δίπλα στον LLM έλεγχο
-    του Debugger (που ήδη προσπαθεί να το πιάσει σημασιολογικά), όχι αντικατάστασή του — αν το
-    task text δεν ταιριάζει με το αναγνωρίσιμο μοτίβο 'X ... αλλιώς ... Y', επιστρέφει (False,
-    None) αντί να μαντέψει."""
+    """Best-effort έλεγχος αντεστραμμένης λογικής σε απλό if/else (task: 'μεγαλύτερη από 50 →
+    High, αλλιώς → Low', κώδικας: τυπώνει Low όταν είναι μεγαλύτερη)."""
     task = current_task or ""
     if "αλλιώς" not in task:
         return False, None
@@ -417,13 +383,13 @@ def _if_else_direction_mismatch(student_code: str, current_task: str):
         if not isinstance(op, (ast.Gt, ast.GtE, ast.Lt, ast.LtE)):
             continue
         if not node.orelse or isinstance(node.orelse[0], ast.If):
-            continue  # χωρίς else, ή if/elif/else — εκτός εμβέλειας αυτού του απλού ελέγχου
+            continue
         body_string = _first_print_string(node.body)
         else_string = _first_print_string(node.orelse)
         if body_string is None or else_string is None:
             continue
         if body_string not in (true_string, false_string) or else_string not in (true_string, false_string):
-            continue  # άσχετα strings — δεν είναι το if/else που αφορά η εκφώνηση
+            continue
         code_is_greater = isinstance(op, (ast.Gt, ast.GtE))
         same_direction = (code_is_greater == is_greater)
         expected_body = true_string if same_direction else false_string
@@ -443,7 +409,6 @@ def _strict_task_matching(student_code: str, current_task: str):
         return True, []
 
     assignments = _extract_assignments(student_code)
-    # Συμπεριλαμβάνουμε και ονόματα συναρτήσεων (FunctionDef) ώστε "συνάρτηση calculate" να αναγνωρίζεται
     try:
         _ftree = ast.parse(student_code)
         _defined_funcs = {n.name for n in ast.walk(_ftree) if isinstance(n, ast.FunctionDef)}
@@ -470,8 +435,6 @@ def _strict_task_matching(student_code: str, current_task: str):
         if expected_value not in assignments.values():
             failures.append(f"Δεν βρέθηκε η απαιτούμενη τιμή {expected_value} στο πρόγραμμα.")
 
-    # Έλεγχος ότι κάθε αναμενόμενη μεταβλητή εμφανίζεται σε print() call — όχι απλώς αρίθμηση calls.
-    # Αποτρέπει το print(x); print(x) να γίνεται αποδεκτό ως print(x); print(y).
     task_lower = current_task.lower()
     needs_multi_print = (
         "τύπωνε και τις δύο" in task_lower
@@ -489,12 +452,6 @@ def _strict_task_matching(student_code: str, current_task: str):
                 f"Λείπει το print() για: {', '.join(missing_prints)}."
             )
 
-    # Έλεγχος ότι τα literal strings που ζητά η εκφώνηση εμφανίζονται σε print() calls.
-    # Αποτρέπει π.χ. print("Low") όταν η εκφώνηση ζητά print("High").
-    # Εντοπίζει: τύπωνε "X" / τυπώσεις 'X' / print("X") — έλεγχος case-sensitive.
-    # ΣΗΜΑΝΤΙΚΟ: το "υ" στο τ[υύ]π καλύπτει ΚΑΙ τον τόνο στο "τύπωνε" (τύπ-) ΚΑΙ τον τόνο
-    # αλλού στο "τυπώσεις" (τυπ-ώσεις) — πριν έπιανε ΜΟΝΟ τη μία μορφή, αφήνοντας literal
-    # strings (π.χ. 'Θετικός'/'Μη θετικός') εντελώς ανεξέλεγκτα όταν η εκφώνηση έλεγε "τυπώσεις".
     required_print_strings = re.findall(
         r'τ[υύ]π\w*\s+["\']([^"\']+)["\']',
         current_task,
@@ -529,13 +486,9 @@ _GREEK_LIST_COUNT_WORDS = {"ένα": 1, "ενα": 1, "δύο": 2, "δυο": 2, "
 
 
 def _required_list_count(criterion_lower: str):
-    """Εξάγει πλήθος στοιχείων λίστας που αναφέρεται ρητά στο ίδιο το κριτήριο (π.χ. 'τουλάχιστον
-    ένα στοιχείο' → (1, ελάχιστο)). Επιστρέφει (None, False) αν δεν αναφέρεται αριθμός — τότε
-    αρκεί η λίστα να μην είναι εντελώς κενή (βλ. has_nonempty_list).
-
-    ΣΗΜΑΝΤΙΚΟ: χρησιμοποιεί \\b όρια λέξης, ΟΧΙ naive substring — το 'ένα' ως substring ταιριάζει
-    και μέσα σε εντελώς άσχετες λέξεις όπως 'χωρισμένα' (καταλήγει σε -μένα), δίνοντας ψευδές
-    θετικό αποτέλεσμα. Επιβεβαιωμένο με δοκιμή."""
+    """Πλήθος στοιχείων λίστας που αναφέρεται ρητά στο κριτήριο (π.χ. 'τουλάχιστον ένα στοιχείο'
+    → (1, ελάχιστο)). (None, False) αν δεν αναφέρεται αριθμός. Χρησιμοποιεί \\b όρια λέξης ώστε
+    το 'ένα' να μην ταιριάζει μέσα σε λέξεις όπως 'χωρισμένα'."""
     is_minimum = bool(re.search(r"\bτουλάχιστον\b|\bτουλαχιστον\b", criterion_lower))
     for word, n in _GREEK_LIST_COUNT_WORDS.items():
         if re.search(rf"\b{word}\b", criterion_lower):
@@ -549,20 +502,12 @@ def _criterion_passed(criterion: str, flags):
         return True
     if "snake_case" in c:
         return flags.get("snake_case_ok", True)
-    # Compound "if με elif ή λογικό τελεστή (and/or)" — πιο αυστηρό από απλό has_if,
-    # πρέπει να ελεγχθεί ΠΡΙΝ από τη γενική "if"/"δομή" περίπτωση παρακάτω.
     if "elif" in c or "and/or" in c or "λογικό τελεστ" in c:
         return flags["has_if"] and (flags.get("has_elif") or flags.get("has_boolop"))
     if "len(" in c:
         return flags.get("has_len_call", False)
-    # "Η συνάρτηση καλείται..." — πρέπει να ελεγχθεί ΠΡΙΝ από "def"/"συνάρτ" παρακάτω,
-    # αλλιώς θα έπιανε εκείνο το γενικό branch (has_def) αντί να ελέγξει πραγματική κλήση.
     if "καλείται" in c or "κλήση" in c:
         return flags.get("has_function_call", False)
-    # "print" πρέπει να ελεγχθεί ΠΡΙΝ από "def"/"συνάρτ" παρακάτω — κριτήρια όπως
-    # "Χρησιμοποιείται print() μέσα στη συνάρτηση" περιέχουν ΚΑΙ τις δύο λέξεις, και πριν
-    # έπιανε πάντα "συνάρτ" πρώτο (has_def) αντί να ελέγξει καθόλου το print (επιβεβαιώθηκε με
-    # δοκιμή: κρυμμένο bug, όχι υποθετικό).
     if "print" in c or "τύπων" in c:
         return flags.get("has_reachable_print", flags["has_print"])
     if "ανάθεση" in c or "=" in c:
@@ -587,8 +532,6 @@ def _criterion_passed(criterion: str, flags):
         return flags["has_index"]
     if "return" in c:
         return flags["has_return"]
-    # Κριτήρια string/numeric αποθήκευσης — ελέγχονται ήδη από _type_mismatch_detected
-    # και _strict_task_matching. Εδώ χαρακτηρίζονται ως "passed" αν υπάρχει έστω μία ανάθεση.
     if "εισαγωγικ" in c or "string" in c or "αριθμητ" in c or "χωρίς εισαγωγικ" in c:
         return flags["has_assign"]
     return True
@@ -602,9 +545,6 @@ def _understanding_level(score, attempts, hint_count, is_correct):
         return "needs_support"
     return "developing"
 
-# Χαρτογράφηση understanding_level → % mastery για το Open Learner Model (Bull & Kay) στο frontend.
-# Ζει εδώ, δίπλα στην _understanding_level(), ώστε τα δύο να μένουν συγχρονισμένα σε ένα σημείο
-# αντί για δύο ανεξάρτητα συντηρημένα dicts (routes.py είχε δικό του αντίγραφο πριν).
 UNDERSTANDING_LEVEL_TO_MASTERY_PCT = {"needs_support": 20, "developing": 50, "good": 75, "strong": 95}
 
 _VALID_DECISIONS = {"advance", "repeat", "support"}
@@ -620,9 +560,6 @@ _LLM_ASSESSMENT_RE = re.compile(
 
 def _gather_assessment_facts(debug_report, student_code, success_criteria, current_lesson,
                               current_task, attempts_count, hint_count, time_spent) -> dict:
-    """Συγκεντρώνει ΟΛΑ τα αντικειμενικά, deterministic ευρήματα (δομημένη γνώση) που θα
-    τροφοδοτήσουν την ολιστική κρίση του LLM. Καμία απόφαση (is_correct/decision) δεν παίρνεται
-    εδώ — μόνο μέτρηση γεγονότων, ίδια ακριβώς λογική με πριν, απλά χωρίς να αποφασίζει η ίδια."""
     type_mismatch = _type_mismatch_detected(student_code, success_criteria)
     string_mismatch = _string_mismatch_detected(student_code)
     empty_list_issue = _empty_string_list_elements_detected(student_code, current_lesson)
@@ -634,12 +571,6 @@ def _gather_assessment_facts(debug_report, student_code, success_criteria, curre
     passed = sum(1 for _, ok in per_criterion if ok)
     total = len(per_criterion)
 
-    # Μηδενική βαθμολογία σε "σκληρή" παραβίαση (τεχνικό πρόβλημα από debugger, type/string
-    # mismatch, κενά strings σε λίστα, ή strict-match αποτυχία) — η ίδια σημασιολογία με πριν:
-    # score=0 σημαίνει θεμελιώδες πρόβλημα, ενδιάμεσο score σημαίνει "μερικά κριτήρια
-    # ικανοποιήθηκαν" σε κώδικα που τουλάχιστον τρέχει σωστά τύπους/ονόματα. Χωρίς αυτό, ο
-    # καθαρά δομικός έλεγχος κριτηρίων (_criterion_passed) δεν βλέπει καθόλου undefined names/
-    # type mismatches, οπότε θα ανέφερε παραπλανητικά υψηλό score παρά το is_correct=False.
     has_hard_violation = (
         (bool(debug_report) and any(tag in debug_report for tag in _ERROR_REPORT_TAGS))
         or type_mismatch[0]
@@ -651,9 +582,9 @@ def _gather_assessment_facts(debug_report, student_code, success_criteria, curre
 
     return {
         "debug_report": debug_report,
-        "type_mismatch": type_mismatch,       # (bool, [vars])
-        "string_mismatch": string_mismatch,   # (bool, [vars])
-        "empty_list_issue": empty_list_issue, # (bool, description)
+        "type_mismatch": type_mismatch,
+        "string_mismatch": string_mismatch,
+        "empty_list_issue": empty_list_issue,
         "strict_match_ok": strict_match_ok,
         "strict_failures": strict_failures,
         "per_criterion": per_criterion,
@@ -667,8 +598,6 @@ def _gather_assessment_facts(debug_report, student_code, success_criteria, curre
 
 
 def _fallback_feedback_text(facts: dict) -> str:
-    """Κείμενο feedback όταν δεν είναι διαθέσιμη η ελεύθερη περιγραφή του LLM — αναπαράγει
-    ακριβώς το ίδιο μήνυμα που έδινε το αντίστοιχο deterministic gate πριν."""
     type_mismatch_ok, type_vars = facts["type_mismatch"]
     string_mismatch_ok, string_vars = facts["string_mismatch"]
     empty_list_ok, empty_list_desc = facts["empty_list_issue"]
@@ -688,18 +617,11 @@ def _fallback_feedback_text(facts: dict) -> str:
 
 
 def _needs_support_escalation(attempts_count: int, hint_count: int, time_spent: float) -> bool:
-    """Κατώφλια που εγγυώνται μετάβαση σε 'support' όταν ο μαθητής δυσκολεύεται πραγματικά —
-    ασφαλιστική δικλείδα πάνω από την κρίση του LLM, όχι υποκατάστατό της. Προστέθηκε γιατί σε
-    live testing το LLM έμενε σε 'repeat' επ' αόριστον ακόμα και μετά από 7 συνεχόμενες
-    αποτυχίες στην ίδια άσκηση — τα κατώφλια (ίδια με το παλιό deterministic σύστημα) εγγυώνται
-    ότι η ενεργή υποστήριξη θα προσφερθεί έστω κι αν το LLM δεν το "πρόσεξε" μόνο του."""
     return attempts_count >= 3 or hint_count >= 2 or time_spent > 180
 
 
 def _fallback_assessment(facts: dict) -> dict:
-    """Ελαφρύ δίχτυ ασφαλείας ΜΟΝΟ για τεχνική αποτυχία της κλήσης στο LLM (timeout, σφάλμα
-    δικτύου, unparseable/άκυρη απάντηση) — ΟΧΙ πρωτεύων μηχανισμός απόφασης. Συνοψίζει σε ΕΝΑ
-    σημείο ό,τι πριν ήταν σκορπισμένο σε πέντε ξεχωριστά deterministic gates."""
+    """Χρησιμοποιείται μόνο όταν αποτύχει η κλήση στο LLM."""
     type_mismatch_ok, _ = facts["type_mismatch"]
     string_mismatch_ok, _ = facts["string_mismatch"]
     empty_list_ok, _ = facts["empty_list_issue"]
@@ -736,11 +658,6 @@ def _fallback_assessment(facts: dict) -> dict:
 
 
 def _reason_about_assessment(facts: dict, current_task: str) -> dict:
-    """Η μοναδική κλήση στο LLM που κρίνει ΟΛΙΣΤΙΚΑ αν ο κώδικας είναι σωστός, τι πρέπει να
-    γίνει παιδαγωγικά (advance/repeat/support) και πόσο καλά έχει κατανοήσει ο μαθητής —
-    βασισμένη ΑΠΟΚΛΕΙΣΤΙΚΑ στα αντικειμενικά ευρήματα του _gather_assessment_facts. Αντικαθιστά
-    τα πέντε ανεξάρτητα deterministic gates ΚΑΙ το ξεχωριστό _generate_assessment_feedback call
-    — μία ενιαία κρίση αντί για σκόρπιες φόρμουλες."""
     per_criterion_lines = "\n".join(
         f"- {'OK' if ok else 'FAIL'}: {criterion}" for criterion, ok in facts["per_criterion"]
     ) or "Δεν υπάρχουν καθορισμένα κριτήρια."
@@ -797,31 +714,18 @@ def _reason_about_assessment(facts: dict, current_task: str) -> dict:
 
         decision = decision_raw.strip().lower()
         if decision not in _VALID_DECISIONS:
-            # Δεν περνάει ΠΟΤΕ ελεύθερο κείμενο σε αυτό το πεδίο — load-bearing enum αλλού στον κώδικα.
             raise ValueError(f"invalid assessment_decision: {decision_raw!r}")
 
         is_correct = correct_raw.strip().upper().startswith(("ΝΑΙ", "NAI", "YES"))
 
-        # Αμετάβλητο ίδιο με το παλιό deterministic σύστημα: "advance" ΠΟΤΕ χωρίς is_correct=True,
-        # "support" ΠΟΤΕ με is_correct=True. Το prompt το ζητά ήδη, αλλά επιβεβαιώθηκε σε live
-        # testing ότι το LLM δεν το τηρεί πάντα (is_correct=False + decision=advance εμφάνισε
-        # ψευδές μήνυμα επιτυχίας στον μαθητή χωρίς αυτός να προχωρήσει πραγματικά). Αντί να
-        # εμπιστευτούμε ένα ασυνεπές ζευγάρι, το αντιμετωπίζουμε σαν αποτυχία parsing.
         if (decision == "advance" and not is_correct) or (decision == "support" and is_correct):
             raise ValueError(f"inconsistent is_correct/decision pair: {correct_raw!r} / {decision_raw!r}")
 
-        # Ασφαλιστική δικλείδα: αν ο μαθητής δυσκολεύεται πραγματικά (πολλές προσπάθειες/hints/
-        # χρόνος) αλλά το LLM επέλεξε ξανά 'repeat', αναβαθμίζουμε σε 'support' — βλ.
-        # _needs_support_escalation.
         if not is_correct and decision == "repeat" and _needs_support_escalation(
             facts["attempts_count"], facts["hint_count"], facts["time_spent"]
         ):
             decision = "support"
 
-        # Συμμετρική δικλείδα: αν ο μαθητής τελικά τα κατάφερε αλλά χρειάστηκε πολλές προσπάθειες/
-        # hints, ΜΗΝ προχωρήσεις κατευθείαν — μία ακόμα άσκηση παγιώνει την κατανόηση. Χωρίς αυτό,
-        # ένας μαθητής με 9+ αποτυχημένες υποβολές μπορούσε να πάρει "advance" + "είσαι ταλαντούχος"
-        # στην ίδια στιγμή — επιβεβαιώθηκε σε πραγματική συνομιλία ότι το LLM δεν το τηρούσε πάντα.
         if is_correct and decision == "advance" and (
             facts["attempts_count"] >= 4 or facts["hint_count"] >= 3
         ):
@@ -829,7 +733,6 @@ def _reason_about_assessment(facts: dict, current_task: str) -> dict:
 
         understanding_level = level_raw.strip().lower()
         if understanding_level not in _VALID_UNDERSTANDING_LEVELS:
-            # Μικρό, φθηνό, πάντα-έγκυρο fallback ΜΟΝΟ για αυτό το πεδίο.
             understanding_level = _understanding_level(
                 facts["score"], facts["attempts_count"], facts["hint_count"], is_correct
             )
@@ -847,7 +750,7 @@ def _reason_about_assessment(facts: dict, current_task: str) -> dict:
         return _fallback_assessment(facts)
 
 
-def assessment_node(state):  # Κύρια λογική του Assessment Agent
+def assessment_node(state):
     debug_report = state.get("debug_report", "")
     student_code = state.get("student_code", "")
     success_criteria = state.get("success_criteria", "Ο κώδικας πρέπει να είναι λειτουργικός.")
@@ -866,7 +769,7 @@ def assessment_node(state):  # Κύρια λογική του Assessment Agent
         return {
             "is_correct": result["is_correct"],
             "assessment_feedback": result["assessment_feedback"],
-            "assessment_score": facts["score"],  # παραμένει 100% deterministic, ποτέ εικασία του LLM
+            "assessment_score": facts["score"],
             "assessment_decision": result["assessment_decision"],
             "understanding_level": result["understanding_level"],
         }

@@ -1,14 +1,14 @@
-from typing import Annotated, TypedDict, List  # Εργαλεία typing για ορισμό δομής και τύπων στο state του agent
-from langgraph.graph.message import add_messages # Reducer της LangGraph για συγχώνευση μηνυμάτων στο state
-from langchain_core.messages import BaseMessage # Βασικός τύπος μηνύματος της LangChain για το πεδίο messages
+from typing import Annotated, TypedDict, List
+from langgraph.graph.message import add_messages
+from langchain_core.messages import BaseMessage
 
-class AgentState(TypedDict): # Ορισμός της δομής του state του agent με συγκεκριμένα πεδία και τύπους
-    messages: Annotated[List[BaseMessage], add_messages] # Λίστα μηνυμάτων που θα συγχωνευτούν με τη βοήθεια του add_messages reducer
+class AgentState(TypedDict):
+    messages: Annotated[List[BaseMessage], add_messages]
 
-    student_code: str 
+    student_code: str
     success_criteria: list
-    debug_report: str 
-    is_correct: bool 
+    debug_report: str
+    is_correct: bool
 
     current_lesson: str
     current_lesson_id: int
@@ -33,14 +33,13 @@ class AgentState(TypedDict): # Ορισμός της δομής του state τ�
 
     is_first_login: bool
     difficulty_probe_direction: str  # "" | "upgrade" | "downgrade"
-    avg_hints_per_task: float  # κυλιόμενος μέσος όρος hints ανά άσκηση — ρυθμίζει directness των hints
-    frustration_score: int    # 0-3: frustration level (hints + failed attempts) — ρυθμίζει τον τόνο του mentor
+    avg_hints_per_task: float
+    frustration_score: int
 
     profile_soft_defaulted: bool
     previous_task: str
 
-    free_check_mode: bool  # True → Button 3 (ελεύθερος έλεγχος κώδικα): debugger τρέχει, assessor παρακάμπτεται
-    free_check_description: str  # η δική του περιγραφή πρόθεσης του μαθητή, αντί για current_task/success_criteria
+    free_check_mode: bool
+    free_check_description: str
 
-    practice_mode: bool  # True → Button 2 (εξάσκηση): debugger->assessor->mentor τρέχουν κανονικά,
-                          # αλλά ο mentor απαντάει με πρακτική-mode μήνυμα (streak) αντί για curriculum flow
+    practice_mode: bool

@@ -1,5 +1,5 @@
-import ast # Για deterministic ανάλυση σύνταξης και λογικών δομών
-import builtins # Για έλεγχο built-in ονομάτων
+import ast
+import builtins
 import re
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
@@ -31,23 +31,23 @@ class _Analyzer(ast.NodeVisitor):
         self.has_append = False
         self.has_index = False
         self.has_list = False
-        self.has_nonempty_list = False   # True αν υπάρχει τουλάχιστον μία μη-κενή λίστα literal
-        self.has_empty_list = False      # True αν υπάρχει τουλάχιστον μία κενή λίστα literal []
-        self.has_zero_index = False      # True αν υπάρχει subscript με literal index 0 (π.χ. λίστα[0])
+        self.has_nonempty_list = False
+        self.has_empty_list = False
+        self.has_zero_index = False
         self.has_print = False
-        self.has_empty_print = False     # True αν υπάρχει print() χωρίς ορίσματα
-        self.list_has_only_strings = False  # True αν λίστα περιέχει μόνο string literals
-        self.has_all_empty_string_list = False  # True αν λίστα έχει ≥1 στοιχείο και ΟΛΑ είναι ''
-        self.print_overwritten = False  # True αν ο μαθητής έγραψε print = (...) αντί print(...)
+        self.has_empty_print = False
+        self.list_has_only_strings = False
+        self.has_all_empty_string_list = False
+        self.print_overwritten = False
         self.quoted_number_vars = []
-        self.has_len_method = False      # True αν χρησιμοποιεί λίστα.len() αντί len(λίστα)
-        self.defined_functions = set()   # ονόματα συναρτήσεων που ορίζονται με def
-        self.called_functions = set()    # ονόματα συναρτήσεων που καλούνται (εκτός builtins)
-        self.has_aug_assign = False      # True αν υπάρχει += (accumulator pattern)
-        self.function_params = {}        # fname → αριθμός παραμέτρων
-        self.wrong_call_args = []        # (fname, expected, actual) για λάθος αριθμό ορισμάτων
-        self.print_args = []             # Name args που περνάνε στο print (για print(func_ref))
-        self.func_aliases = set()        # μεταβλητές που ανατίθενται σε function ref (p = func)
+        self.has_len_method = False
+        self.defined_functions = set()
+        self.called_functions = set()
+        self.has_aug_assign = False
+        self.function_params = {}
+        self.wrong_call_args = []
+        self.print_args = []
+        self.func_aliases = set()
 
     def visit_Assign(self, node):
         for target in node.targets:
@@ -61,15 +61,10 @@ class _Analyzer(ast.NodeVisitor):
                 for target in node.targets:
                     if isinstance(target, ast.Name):
                         self.quoted_number_vars.append(target.id)
-        # p = process — μεταβλητή που κρατά reference σε συνάρτηση (για print_func_ref)
         if isinstance(node.value, ast.Name) and node.value.id in self.defined_functions:
             for t in node.targets:
                 if isinstance(t, ast.Name):
                     self.func_aliases.add(t.id)
-        # total = total + num (ή num + total) — ισοδύναμο accumulator pattern με total += num.
-        # Η ίδια η θεωρία του μαθήματος «Επαναλήψεις» το διδάσκει ρητά ως ισοδύναμο
-        # (βλ. content/lessons.json: "total += num   # total = total + num") — αν εδώ αναγνωριζόταν
-        # ΜΟΝΟ το += , ένας μαθητής που ακολουθεί κυριολεκτικά τη θεωρία θα σημειωνόταν λάθος.
         if isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.Add):
             operands = (node.value.left, node.value.right)
             for target in node.targets:
@@ -121,7 +116,6 @@ class _Analyzer(ast.NodeVisitor):
             self.has_print = True
             if not node.args and not node.keywords:
                 self.has_empty_print = True
-            # Εντοπίζει print(func) — Name arg αντί για κλήση
             for arg in node.args:
                 if isinstance(arg, ast.Name):
                     self.print_args.append(arg.id)
@@ -132,7 +126,6 @@ class _Analyzer(ast.NodeVisitor):
         if isinstance(node.func, ast.Name) and node.func.id not in self._BUILTIN_CALL_NAMES:
             fname = node.func.id
             self.called_functions.add(fname)
-            # Εντοπίζει κλήση με λάθος αριθμό ορισμάτων (π.χ. process() αντί process(a, b))
             if fname in self.function_params:
                 expected = self.function_params[fname]
                 actual = len(node.args)
@@ -160,29 +153,16 @@ class _Analyzer(ast.NodeVisitor):
 
 
 def _gather_facts(tree, success_criteria, current_task=""):
-    """Deterministic AST/keyword ανάλυση — παράγει 'δομημένη γνώση' (facts) που τροφοδοτεί
-    την απόφαση του LLM, ΧΩΡΙΣ η ίδια να αποφασίζει την τελική κατηγορία ή έξοδο.
-
-    Επιστρέφει:
-    - facts: list[(sentence, category)] — ΤΑ ΙΔΙΑ εντοπισμένα ευρήματα με πριν (ίδιες συνθήκες,
-      ίδιες προτάσεις), σε προτεραιότητα εμφάνισης. Το "category" ΔΕΝ δίνεται στο LLM — υπάρχει
-      μόνο ως ασφαλιστική δικλείδα για το deterministic fallback αν αποτύχει η κλήση στο LLM.
-    - raw_flags: πλήρες στιγμιότυπο των δομικών στοιχείων του κώδικα, ΑΚΟΜΑ ΚΙ ΑΝ δεν
-      ενεργοποίησαν κανένα εύρημα — έτσι το LLM κρίνει πάνω σε πλήρη εικόνα, όχι μόνο σε
-      'συναγερμούς' που ενδέχεται να το οδηγήσουν σε λανθασμένο συμπέρασμα.
-    """
     analyzer = _Analyzer()
     analyzer.visit(tree)
 
     facts = []
-    # Συνδυάζουμε criteria + task text ώστε λέξεις-κλειδιά από εκφώνηση να εντοπίζονται
     criteria_text = (_criteria_text(success_criteria) + " " + (current_task or "")).lower()
 
     undefined = sorted(
         name for name in (analyzer.loaded - analyzer.assigned)
         if name not in BUILTIN_NAMES
     )
-    # Bug 3: λίστα.len() αντί len(λίστα)
     if analyzer.has_len_method:
         facts.append(("Χρήση .len() ως μέθοδος — δεν υπάρχει. Χρησιμοποίησε len(λίστα) αντί για λίστα.len().", "method_error"))
 
@@ -207,7 +187,6 @@ def _gather_facts(tree, success_criteria, current_task=""):
     if ("index" in criteria_text or "[0]" in criteria_text) and not analyzer.has_index:
         facts.append(("Απουσία πρόσβασης με index ενώ ζητείται.", "missing_index"))
 
-    # Λίστα υπάρχει αλλά είναι άδεια ενώ η εκφώνηση ζητά στοιχεία (append exercises εξαιρούνται)
     if (analyzer.has_list and "append" not in criteria_text
             and analyzer.has_empty_list and not analyzer.has_nonempty_list):
         if any(kw in criteria_text for kw in ["στοιχεί", "string", "αριθμ", "τιμ"]):
@@ -216,11 +195,6 @@ def _gather_facts(tree, success_criteria, current_task=""):
                 "empty_list",
             ))
 
-    # Λίστα έχει το ΣΩΣΤΟ πλήθος στοιχείων αλλά είναι όλα κενά strings ('') — ΔΙΑΦΟΡΕΤΙΚΟ πρόβλημα
-    # από την εντελώς άδεια λίστα: ο μαθητής έφτιαξε σωστά τη δομή, λείπει μόνο περιεχόμενο. Πριν
-    # αυτό δεν ελεγχόταν καθόλου deterministic — το LLM μερικές φορές ισχυριζόταν λανθασμένα "δεν
-    # έχεις τρία στοιχεία" ενώ πραγματικά υπήρχαν, μόνο κενά. Η διατύπωση αναγνωρίζει ρητά ότι το
-    # πλήθος είναι σωστό, ώστε να μη μπερδεύει τον μαθητή.
     if analyzer.has_all_empty_string_list:
         facts.append((
             "Η λίστα έχει το σωστό πλήθος στοιχείων, αλλά είναι όλα κενά strings (''). "
@@ -228,21 +202,15 @@ def _gather_facts(tree, success_criteria, current_task=""):
             "empty_string_elements",
         ))
 
-    # Λάθος τιμή index: η εκφώνηση ζητά [0] αλλά χρησιμοποιείται διαφορετικό index
     if "[0]" in criteria_text and analyzer.has_index and not analyzer.has_zero_index:
         facts.append((
             "Χρησιμοποιείται λάθος index. Η εκφώνηση ζητά [0] για να πάρει το πρώτο στοιχείο.",
             "wrong_index",
         ))
 
-    # Bug 1: αθροιστής (+=) απαιτείται αλλά λείπει
     if ("άθροισμ" in criteria_text or "αθροιστ" in criteria_text) and analyzer.has_for and not analyzer.has_aug_assign:
         facts.append(("Λείπει ο αθροιστής (total += ...). Χρειάζεται μεταβλητή που ξεκινά από 0 και αυξάνεται σε κάθε επανάληψη.", "missing_accumulator"))
 
-    # Πιθανό ατέρμονο (infinite) loop: while όπου καμία μεταβλητή της συνθήκης δεν ενημερώνεται
-    # ποτέ μέσα στο σώμα, χωρίς break. Πολύ συχνό λάθος αρχαρίων (ξέχασε x += 1) — πριν ήταν
-    # εντελώς αόρατο (has_print/has_for κλπ δεν λένε τίποτα γι' αυτό), οπότε τέτοιος κώδικας
-    # μπορούσε να βαθμολογηθεί ως πλήρως σωστός ενώ στην πραγματικότητα δεν τερματίζει ποτέ.
     for _while_node in ast.walk(tree):
         if not isinstance(_while_node, ast.While):
             continue
@@ -267,7 +235,6 @@ def _gather_facts(tree, success_criteria, current_task=""):
             ))
             break
 
-    # print(func_ref) — συνάρτηση περνά ως αναφορά αντί να καλείται (print(process) αντί print(process(...)))
     _bare_in_print = [
         a for a in analyzer.print_args
         if a in analyzer.defined_functions or a in analyzer.func_aliases
@@ -279,19 +246,16 @@ def _gather_facts(tree, success_criteria, current_task=""):
             "print_func_ref",
         ))
 
-    # Λάθος αριθμός ορισμάτων στην κλήση συνάρτησης (π.χ. process() αντί process(a, b))
     if analyzer.wrong_call_args and not _has_print_func_ref:
         fname, expected, actual = analyzer.wrong_call_args[0]
         facts.append((f"Η {fname}() καλείται με {actual} ορίσματα ενώ χρειάζεται {expected}.", "wrong_arg_count"))
 
     if ("τύπων" in criteria_text or "print" in criteria_text) and not analyzer.has_print:
         if analyzer.print_overwritten:
-            # Ειδικό λάθος: print = (...) αντί print(...)
             facts.append(("Ο μαθητής έγραψε 'print = (...)' αντί 'print(...)' — η print αντικαταστάθηκε ως μεταβλητή.", "print_as_variable"))
         elif (analyzer.has_def
               and analyzer.defined_functions
               and not (analyzer.called_functions & analyzer.defined_functions)):
-            # Bug 5: συνάρτηση ορίστηκε αλλά δεν καλείται ποτέ — αιτία του ελλείποντος print()
             facts.append(("Συνάρτηση ορίζεται αλλά δεν καλείται ποτέ — γι' αυτό λείπει το output.", "missing_call"))
         else:
             facts.append(("Απουσία print() ενώ ζητείται output.", "missing_output"))
@@ -302,7 +266,6 @@ def _gather_facts(tree, success_criteria, current_task=""):
             "type_mismatch",
         ))
 
-    # Λίστα με string στοιχεία αντί αριθμητικά (π.χ. ["α","β","γ"] αντί [1,2,3])
     if analyzer.list_has_only_strings and analyzer.has_for and any(
         kw in criteria_text for kw in ["αριθμ", "τετράγων", "τετραγων", "number", "num"]
     ):
@@ -311,7 +274,6 @@ def _gather_facts(tree, success_criteria, current_task=""):
             "wrong_list_type",
         ))
 
-    # print() χωρίς ορίσματα ενώ η εκφώνηση ζητά συγκεκριμένο output
     if analyzer.has_empty_print and any(
         kw in criteria_text for kw in ["τύπωσε", "τύπωνε", "εκτύπωσε", "print"]
     ):
@@ -339,11 +301,8 @@ def _gather_facts(tree, success_criteria, current_task=""):
     return facts, raw_flags
 
 
-# Σταθερό λεξιλόγιο κατηγοριών — ΤΑΥΤΟΣΗΜΟ με τα tags που ήδη αναγνωρίζει ο Mentor
-# (has_structural_error / _targeted_hint_text / _ERROR_CATEGORY_LABELS στο agents/mentor.py) και
-# ο routes.py (_extract_debug_categories). Το LLM ΠΡΕΠΕΙ να επιλέξει μία εξ αυτών — δεν εφευρίσκει
-# νέα κατηγορία. Οι περιγραφές είναι το μόνο πλαίσιο που έχει το LLM για να ταιριάξει σωστά τα
-# ευρήματα (ή δικές του σημασιολογικές παρατηρήσεις) σε κατηγορία.
+# Πρέπει να μείνει συγχρονισμένο με has_structural_error/_targeted_hint_text στο mentor.py
+# και με _extract_debug_categories στο routes.py.
 _DEBUG_CATEGORIES = {
     "method_error": "χρήση .len() ως μέθοδος σε λίστα αντί της συνάρτησης len(λίστα)",
     "undefined_name": "χρήση μεταβλητής που δεν έχει οριστεί/αναγνωριστεί ακόμα",
@@ -376,12 +335,6 @@ _LLM_DEBUG_RE = re.compile(
 
 
 def _reason_about_code(student_code: str, success_criteria, current_task: str, facts, raw_flags):
-    """Η μοναδική κλήση στο LLM που αποφασίζει αν υπάρχει πρόβλημα στον κώδικα — δομικό ή
-    σημασιολογικό — και ποια κατηγορία ταιριάζει, βασισμένη ΑΠΟΚΛΕΙΣΤΙΚΑ στα δεδομένα (δομημένη
-    γνώση) που της δίνονται. Αντικαθιστά τόσο την παλιά if/elif απόφαση κατηγορίας όσο και το
-    ξεχωριστό _semantic_analysis call — μία ενιαία κρίση αντί για δύο διαδοχικές.
-    Επιστρέφει (status, category, explanation) με status ∈ {"OK", "PROBLEM"}.
-    """
     criteria_text = _criteria_text(success_criteria)
 
     flags_lines = "\n".join(f"- {k}: {v}" for k, v in raw_flags.items())
@@ -445,22 +398,12 @@ def _reason_about_code(student_code: str, success_criteria, current_task: str, f
         category = category_raw.strip().lower()
         if category not in _DEBUG_CATEGORIES:
             category = "general_logic"
-        # Σκληρή επικύρωση έναντι δομημένων δεδομένων: το LLM επιμένει μερικές φορές σε
-        # 'type_mismatch' ακόμα κι όταν η ίδια η εξήγησή του παραδέχεται ότι δεν υπάρχει τέτοιο
-        # πρόβλημα (π.χ. όταν το πραγματικό ζήτημα είναι μια εντελώς λείπουσα μεταβλητή) — το
-        # prompt από μόνο του δεν αρκεί πάντα. Το raw_flags["quoted_number_vars"] είναι ήδη
-        # υπολογισμένο deterministic γεγονός: αν είναι κενό, ΔΕΝ υπάρχει καμία μεταβλητή με
-        # αριθμητική τιμή σε εισαγωγικά στον κώδικα, άρα η κατηγορία type_mismatch είναι αδύνατο
-        # να ισχύει — υποβιβάζεται σε general_logic αντί να περάσει ένας αβάσιμος ισχυρισμός.
         if category == "type_mismatch" and not raw_flags.get("quoted_number_vars"):
             category = "general_logic"
         if not explanation:
             explanation = _DEBUG_CATEGORIES.get(category, "Εντοπίστηκε πρόβλημα.")
         return "PROBLEM", category, explanation
     except Exception:
-        # Ασφαλιστική δικλείδα ΜΟΝΟ για τεχνική αποτυχία (timeout, σφάλμα δικτύου, unparseable
-        # απάντηση) — ΟΧΙ πρωτεύων μηχανισμός απόφασης. Χρησιμοποιεί το πρώτο (υψηλότερης
-        # προτεραιότητας) ενεργοποιημένο εύρημα, ακριβώς όπως αποφάσιζε το παλιό if/elif chain.
         if facts:
             sentence, category = facts[0]
             return "PROBLEM", category, sentence
@@ -478,12 +421,10 @@ def debugging_node(state):
     try:
         tree = ast.parse(student_code)
     except SyntaxError as e:
-        # Συγκεκριμένη ανίχνευση: 'else if' αντί για 'elif' — κοινό λάθος αρχαρίων
         if re.search(r'\belse\s+if\b', student_code):
             return {
                 "debug_report": "[DEBUG: ERROR] else_if_error"
             }
-        # Συγκεκριμένη ανίχνευση: literal τιμές ως ονόματα παραμέτρων (π.χ. def func(1, 4):)
         if re.search(r'\bdef\s+\w+\s*\([^)]*\d[^)]*\)', student_code):
             return {
                 "debug_report": "[DEBUG: ERROR] literal_param_error"
