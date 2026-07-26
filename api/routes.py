@@ -58,7 +58,8 @@ class ChatRequest(BaseModel): # Σχήμα για τα δεδομένα που �
 
 _HISTORY_TOKENS_RE = re.compile(
     r'\n?\[(?:HINT|AWAITING_QUESTIONS|BUTTON:START_TASK|BUTTON:CONTINUE_TASK|'
-    r'ASSESSMENT:ADVANCE|ASSESSMENT:REPEAT|ASSESSMENT:SUPPORT|DEBUG:[^\]]*)\]'
+    r'ASSESSMENT:ADVANCE|ASSESSMENT:REPEAT|ASSESSMENT:SUPPORT|DEBUG:[^\]]*|'
+    r'ASCII_SHOWN:\d+|THEORY_DIFFICULTY:\w+:\d+)\]'
 )
 
 def _sanitize_history(text: str) -> str:
@@ -609,6 +610,13 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     )
     db_history = history_query.scalars().all()
 
+    # Κάθε κλήση εδώ αντιστοιχεί σε πραγματικό (ξανα-)login — η εφαρμογή δεν μένει συνδεδεμένη
+    # μεταξύ φορτώσεων σελίδας (βλ. αφαίρεση localStorage persistence) — οπότε κάθε /welcome ΕΙΝΑΙ
+    # μια νέα, ξεχωριστή συνεδρία από τη σκοπιά του χρήστη. Ρητή προτίμηση: κάθε σύνδεση να
+    # φαίνεται καθαρά ξεχωριστή στο Ιστορικό, με δικό της καλωσόρισμα, όχι σιωπηλά ενωμένη με την
+    # προηγούμενη βάσει χρονικού ορίου αδράνειας.
+    new_session_id = int(time.time())
+
     if db_history:
         idx = max(0, min(user.current_lesson_id - 1, len(_LESSON_TITLES_DISPLAY) - 1))
         lesson_name = _LESSON_TITLES_DISPLAY[idx]
@@ -637,25 +645,6 @@ async def session_welcome(user_id: int, db: AsyncSession = Depends(get_db)):
     cohort_pct = await _compute_cohort_completion_pct(db, TOTAL_LESSONS)
     mastery_profile = _compute_mastery_profile(user, db_history, struggle_flags, cohort_pct)
 
-    # ΚΡΙΣΙΜΟ: πριν εδώ γινόταν ΠΑΝΤΑ int(time.time()) — κάθε refresh της σελίδας (ή remount του
-    # React component) μέσα στην ΙΔΙΑ συνεδρία δημιουργούσε ΝΕΟ session_id, σπάζοντας μία συνεχή
-    # συζήτηση σε πολλές μονο-μηνυματικές "συνεδρίες" στο Ιστορικό — επιβεβαιώθηκε με άμεση δοκιμή.
-    # Αν το τελευταίο μήνυμα είναι πρόσφατο (ίδιο "κάθισμα"), συνεχίζουμε το ίδιο session_id αντί
-    # να το κατακερματίσουμε. Μόνο μετά από πραγματικό διάλειμμα ξεκινάει νέο session_id.
-    _SESSION_IDLE_THRESHOLD_SECONDS = 30 * 60
-    new_session_id = int(time.time())
-    if db_history:
-        last_msg = db_history[-1]
-        if last_msg.session_id and last_msg.session_id > 0:
-            try:
-                last_dt = datetime.fromisoformat(last_msg.created_at)
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=timezone.utc)
-                idle_seconds = (datetime.now(timezone.utc) - last_dt).total_seconds()
-            except Exception:
-                idle_seconds = float("inf")
-            if idle_seconds < _SESSION_IDLE_THRESHOLD_SECONDS:
-                new_session_id = last_msg.session_id
     db.add(ChatHistory(
         user_id=user.id,
         role="ai",
@@ -943,7 +932,7 @@ async def chat(user_id: int, request: ChatRequest, db: AsyncSession = Depends(ge
         # Στο DB αποθηκεύουμε raw_response ώστε να λειτουργούν σωστά τα
         # _infer_awaiting_questions (ψάχνει [AWAITING_QUESTIONS]), _count_hints (ψάχνει [HINT])
         # και _ascii_visual_already_shown (ψάχνει [ASCII_SHOWN:id]).
-        ai_response = re.sub(r'\n?\[(HINT|AWAITING_QUESTIONS|ASCII_SHOWN:\d+)\]', '', raw_response).strip()
+        ai_response = re.sub(r'\n?\[(HINT|AWAITING_QUESTIONS|ASCII_SHOWN:\d+|THEORY_DIFFICULTY:\w+:\d+)\]', '', raw_response).strip()
         if not ai_response:
             # Ασφαλιστική δικλείδα: σπάνια το LLM επιστρέφει επιτυχώς αλλά με κενό/μόνο-foreign-
             # script περιεχόμενο (π.χ. _strip_foreign_scripts αφαιρεί τα πάντα) — χωρίς αυτό ο

@@ -37,6 +37,7 @@ class _Analyzer(ast.NodeVisitor):
         self.has_print = False
         self.has_empty_print = False     # True αν υπάρχει print() χωρίς ορίσματα
         self.list_has_only_strings = False  # True αν λίστα περιέχει μόνο string literals
+        self.has_all_empty_string_list = False  # True αν λίστα έχει ≥1 στοιχείο και ΟΛΑ είναι ''
         self.print_overwritten = False  # True αν ο μαθητής έγραψε print = (...) αντί print(...)
         self.quoted_number_vars = []
         self.has_len_method = False      # True αν χρησιμοποιεί λίστα.len() αντί len(λίστα)
@@ -145,6 +146,8 @@ class _Analyzer(ast.NodeVisitor):
             self.has_nonempty_list = True
             if all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.elts):
                 self.list_has_only_strings = True
+                if all(e.value == "" for e in node.elts):
+                    self.has_all_empty_string_list = True
         else:
             self.has_empty_list = True
         self.generic_visit(node)
@@ -212,6 +215,18 @@ def _gather_facts(tree, success_criteria, current_task=""):
                 "Η λίστα είναι άδεια ([]). Η εκφώνηση ζητά στοιχεία μέσα σε αυτήν — πρόσθεσέ τα απευθείας.",
                 "empty_list",
             ))
+
+    # Λίστα έχει το ΣΩΣΤΟ πλήθος στοιχείων αλλά είναι όλα κενά strings ('') — ΔΙΑΦΟΡΕΤΙΚΟ πρόβλημα
+    # από την εντελώς άδεια λίστα: ο μαθητής έφτιαξε σωστά τη δομή, λείπει μόνο περιεχόμενο. Πριν
+    # αυτό δεν ελεγχόταν καθόλου deterministic — το LLM μερικές φορές ισχυριζόταν λανθασμένα "δεν
+    # έχεις τρία στοιχεία" ενώ πραγματικά υπήρχαν, μόνο κενά. Η διατύπωση αναγνωρίζει ρητά ότι το
+    # πλήθος είναι σωστό, ώστε να μη μπερδεύει τον μαθητή.
+    if analyzer.has_all_empty_string_list:
+        facts.append((
+            "Η λίστα έχει το σωστό πλήθος στοιχείων, αλλά είναι όλα κενά strings (''). "
+            "Χρειάζεται πραγματικό περιεχόμενο μέσα σε κάθε στοιχείο, όχι κενό.",
+            "empty_string_elements",
+        ))
 
     # Λάθος τιμή index: η εκφώνηση ζητά [0] αλλά χρησιμοποιείται διαφορετικό index
     if "[0]" in criteria_text and analyzer.has_index and not analyzer.has_zero_index:
@@ -350,6 +365,7 @@ _DEBUG_CATEGORIES = {
     "empty_print": "το print() καλείται χωρίς κανένα όρισμα",
     "missing_output": "λείπει εντελώς η εντολή print() ενώ ζητείται εμφάνιση αποτελέσματος",
     "possible_infinite_loop": "while loop όπου η μεταβλητή της συνθήκης δεν ενημερώνεται ποτέ μέσα στο σώμα του loop, χωρίς break — αν εκτελεστεί, δεν τερματίζει ποτέ",
+    "empty_string_elements": "λίστα με το σωστό πλήθος στοιχείων αλλά όλα κενά strings ('') — χρειάζεται πραγματικό περιεχόμενο, ΟΧΙ αλλαγή πλήθους",
     "general_logic": "οποιοδήποτε άλλο σημασιολογικό/λογικό πρόβλημα που δεν ταιριάζει στις παραπάνω κατηγορίες",
 }
 

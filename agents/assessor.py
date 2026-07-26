@@ -818,6 +818,15 @@ def _reason_about_assessment(facts: dict, current_task: str) -> dict:
         ):
             decision = "support"
 
+        # Συμμετρική δικλείδα: αν ο μαθητής τελικά τα κατάφερε αλλά χρειάστηκε πολλές προσπάθειες/
+        # hints, ΜΗΝ προχωρήσεις κατευθείαν — μία ακόμα άσκηση παγιώνει την κατανόηση. Χωρίς αυτό,
+        # ένας μαθητής με 9+ αποτυχημένες υποβολές μπορούσε να πάρει "advance" + "είσαι ταλαντούχος"
+        # στην ίδια στιγμή — επιβεβαιώθηκε σε πραγματική συνομιλία ότι το LLM δεν το τηρούσε πάντα.
+        if is_correct and decision == "advance" and (
+            facts["attempts_count"] >= 4 or facts["hint_count"] >= 3
+        ):
+            decision = "repeat"
+
         understanding_level = level_raw.strip().lower()
         if understanding_level not in _VALID_UNDERSTANDING_LEVELS:
             # Μικρό, φθηνό, πάντα-έγκυρο fallback ΜΟΝΟ για αυτό το πεδίο.

@@ -11,10 +11,11 @@ const _isLocal = window.location.hostname === 'localhost' || window.location.hos
 const API_BASE = _isLocal ? (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000') : '/backend';
 
 export default function App() {
-  const [user, setUser] = useState(JSON.parse(localStorage.getItem('python_user_data')) || null);
-  const [currentView, setCurrentView] = useState(
-    localStorage.getItem('python_user_data') ? 'landing' : null
-  );
+  // Σκόπιμα ΔΕΝ διαβάζουμε/αποθηκεύουμε στο localStorage — για λόγους ασφαλείας η εφαρμογή δεν
+  // μένει συνδεδεμένη στον τελευταίο χρήστη μετά από reload/κλείσιμο. Κάθε φόρτωση ξεκινά από
+  // την οθόνη σύνδεσης, ανεξάρτητα από προηγούμενη συνεδρία σε αυτόν τον browser.
+  const [user, setUser] = useState(null);
+  const [currentView, setCurrentView] = useState(null);
   const [courseCompleted, setCourseCompleted] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState(0);
   const [showHistorySidebar, setShowHistorySidebar] = useState(false);
@@ -153,6 +154,12 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Ενεργός καθαρισμός τυχόν παλιού python_user_data από πριν αυτή η επιλογή ασφαλείας υπάρξει —
+  // ώστε να μη μείνει κανένα ίχνος προηγούμενου χρήστη στον browser.
+  useEffect(() => {
+    localStorage.removeItem('python_user_data');
+  }, []);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -224,7 +231,6 @@ export default function App() {
         setShowPassword(false);
       } else {
         setUser(res.data);
-        localStorage.setItem('python_user_data', JSON.stringify(res.data));
         setCurrentView('landing');
       }
     } catch (err) {
@@ -260,6 +266,13 @@ export default function App() {
     setLastActivityTime(null);
     localStorage.removeItem('python_user_data');
     setMessages([]);
+    // Καθαρίζουμε και το ιστορικό από το React state (όχι μόνο localStorage) — χωρίς αυτό,
+    // μια αποσύνδεση/επανασύνδεση εντός της ίδιας καρτέλας (χωρίς ριφρές) άφηνε το sidebar
+    // με μπαγιάτικα δεδομένα από πριν την αποσύνδεση, μέχρι να γίνει χειροκίνητο refresh.
+    setCurrentSessionId(0);
+    setHistorySessions([]);
+    setShowHistorySidebar(false);
+    setHistoryModal(null);
   };
 
   const handleEnterMentor = () => {

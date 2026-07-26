@@ -179,6 +179,25 @@ def _ascii_visual_already_shown(messages, lesson_id) -> bool:
     tag = f"[ASCII_SHOWN:{lesson_id}]"
     return any(tag in (getattr(msg, "content", "") or "") for msg in messages)
 
+
+def _shown_theory_difficulty(messages, lesson_id):
+    """Επιστρέφει 'hard' αν έχει ήδη δειχθεί η δύσκολη θεωρία αυτού του μαθήματος στη συζήτηση,
+    'easy' αν έχει δειχθεί μόνο η εύκολη, ή None αν δεν έχει δειχθεί καθόλου θεωρία ακόμα.
+    Χρησιμοποιείται ώστε η δυσκολία της ΑΣΚΗΣΗΣ να μην ξεπερνά ποτέ τη δυσκολία της θεωρίας που
+    όντως είδε ο μαθητής — βρέθηκε πραγματικό σενάριο όπου δείχτηκε easy θεωρία (χωρίς append())
+    αλλά αργότερα, αφού το difficulty_probe_direction αναβαθμίστηκε σε άσχετο turn, δόθηκε hard
+    άσκηση που απαιτούσε append() — μια έννοια που δεν είχε διδαχθεί ποτέ."""
+    hard_tag = f"[THEORY_DIFFICULTY:hard:{lesson_id}]"
+    easy_tag = f"[THEORY_DIFFICULTY:easy:{lesson_id}]"
+    best = None
+    for msg in messages:
+        content = getattr(msg, "content", "") or ""
+        if hard_tag in content:
+            return "hard"  # το hard είναι already το ανώτερο δυνατό, δεν χρειάζεται να συνεχίσουμε
+        if easy_tag in content:
+            best = "easy"
+    return best
+
 def _task_already_presented(messages) -> bool:
     """True αν ο μαθητής έχει ήδη λάβει την τρέχουσα άσκηση.
     Σταματά στο [ASSESSMENT:REPEAT] ή [ASSESSMENT:ADVANCE] — και οι δύο σηματοδοτούν
@@ -448,6 +467,10 @@ def _answer_theory_question(user_input: str, lesson_title: str, theory: str, ton
         f'- ΜΗΝ δώσεις άσκηση\n'
         f'- ΜΗΝ επαναλάβεις όλη τη θεωρία — μόνο ό,τι αφορά την ερώτηση\n'
         f'- Αν ρωτά για κάτι που έχει ΗΔΗ διδαχθεί (ακόμα και από ΠΡΟΗΓΟΥΜΕΝΗ ενότητα), απάντησε κανονικά\n'
+        f'- ΚΡΙΣΙΜΟ: διάβασε προσεκτικά ΤΙ ΑΚΡΙΒΩΣ ρωτάει, όχι μόνο το γενικό θέμα. Αν ρωτάει "πώς κάνω Χ" '
+        f'απάντησε ΓΙΑ ΤΟ Χ συγκεκριμένα, όχι για κάτι άλλο σχετικό με το ίδιο θέμα. Π.χ. αν ρωτάει '
+        f'"πώς εκτυπώνω λίστα" η απάντηση αφορά print(), ΟΧΙ πώς φτιάχνεις λίστα — αν έχει ήδη πει ότι '
+        f'ξέρει το ένα και ρωτάει το άλλο, μην ξαναεξηγήσεις αυτό που είπε ότι ήδη ξέρει.\n'
         f'- Αν ρωτά για κάτι που ΔΕΝ έχει διδαχθεί ακόμα, πες: '
         f'"Πολύ καλή ερώτηση! Αυτό θα το δούμε σε επόμενη ενότητα — μείνε ψύχραιμος, θα γίνει ξεκάθαρο σύντομα."\n'
         f'- ΕΣΟΧΗ: η Python απαιτεί ΣΥΝΕΠΗ εσοχή. Το PEP 8 προτείνει 4 κενά αλλά 2 ή 3 συνεπή κενά επίσης λειτουργούν — το κλειδί είναι η ΣΥΝΕΠΕΙΑ στο ίδιο block.\n'
@@ -596,21 +619,34 @@ def _generate_hint_with_llm(
         style_note = "Αυτός ο μαθητής συνήθως καταλαβαίνει με μια μόνο υπόδειξη — κράτα τη γενική και παιδαγωγική.\n"
     else:
         style_note = ""
+    # ΠΟΤΕ μην αναφέρεις εσωτερικά ονόματα συστήματος (Assessor/Debugger/Mentor) στον μαθητή, και
+    # ΠΟΤΕ μην τον παραπέμπεις να δει κάτι "μόνος του" — δεν έχει πρόσβαση σε καμία εσωτερική
+    # αναφορά/ευρήματα, βλέπει ΜΟΝΟ ό,τι του γράφεις. Βρέθηκε σε πραγματική συνομιλία να λέει
+    # στον μαθητή "δες την Αξιολόγηση Assessor" — παραπέμποντας σε κάτι αόρατο γι' αυτόν.
+    _no_leak_rule = (
+        f"ΜΗΝ αναφέρεις πουθενά τις λέξεις 'Assessor', 'Debugger' ή οποιοδήποτε εσωτερικό σύστημα/ευρήματα — "
+        f"ο μαθητής δεν τα βλέπει ποτέ. Πες του απευθείας τι πρέπει να διορθώσει, σαν να το βλέπεις εσύ ο ίδιος. "
+        f"ΜΗΝ τον παραπέμπεις να δει κάτι 'μόνος του' ή αλλού.\n"
+        f"ΜΗΝ περιγράψεις κώδικα, εντολή ή λέξη που δεν εμφανίζεται ΚΥΡΙΟΛΕΚΤΙΚΑ στην υποβολή του — "
+        f"αν δεν είσαι σίγουρος τι έγραψε, μείνε γενικός αντί να μαντέψεις λάθος.\n"
+    )
     if explain_directly:
         core_instruction = (
             f"Ο μαθητής δυσκολεύεται πραγματικά — δεν έχει καταλάβει με {hint_count} hints. "
             f"Σε αυτό το σημείο ΑΛΛΑΞΕ ύφος: μην κρατάς κρυφό το πρόβλημα με έμμεσο hint. "
             f"Εξήγησε ΣΥΓΚΕΚΡΙΜΕΝΑ ποιο είναι το λάθος και ΓΙΑΤΙ είναι λάθος (2-3 προτάσεις).\n"
-            f"ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: Βασίσου ΑΠΟΚΛΕΙΣΤΙΚΑ στην 'Αξιολόγηση Assessor'.\n"
+            f"ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: Βασίσου ΑΠΟΚΛΕΙΣΤΙΚΑ στα παραπάνω ευρήματα ανάλυσης.\n"
             f"ΜΗΝ υποθέσεις πρόσθετα προβλήματα που δεν αναφέρονται εκεί.\n"
+            f"{_no_leak_rule}"
             f"ΜΗΝ γράψεις διορθωμένο κώδικα — εξήγησε το πρόβλημα, ο μαθητής το διορθώνει μόνος του.\n"
             f"Απευθύνσου ΠΑΝΤΑ στον μαθητή σε β' ενικό (π.χ. 'πρόσεξε', 'δες', 'δοκίμασε', 'κοίτα') — ΜΗΝ μιλάς για τον μαθητή σε τρίτο πρόσωπο.\n\nΕξήγηση:"
         )
     else:
         core_instruction = (
             f"Δώσε ΕΝΑ hint (1-2 προτάσεις) που να οδηγεί στη σωστή κατεύθυνση.\n"
-            f"ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: Βασίσου ΑΠΟΚΛΕΙΣΤΙΚΑ στην 'Αξιολόγηση Assessor'.\n"
+            f"ΚΡΙΤΙΚΟΣ ΚΑΝΟΝΑΣ: Βασίσου ΑΠΟΚΛΕΙΣΤΙΚΑ στα παραπάνω ευρήματα ανάλυσης.\n"
             f"ΜΗΝ υποθέσεις πρόσθετα προβλήματα που δεν αναφέρονται εκεί.\n"
+            f"{_no_leak_rule}"
             f"ΜΗΝ δώσεις τη λύση. ΜΗΝ γράψεις κώδικα.\n"
             f"Απευθύνσου ΠΑΝΤΑ στον μαθητή σε β' ενικό (π.χ. 'πρόσεξε', 'δες', 'δοκίμασε', 'κοίτα') — ΜΗΝ μιλάς για τον μαθητή σε τρίτο πρόσωπο.\n\nHint:"
         )
@@ -618,7 +654,7 @@ def _generate_hint_with_llm(
         f"Είσαι καθηγητής Python. Ο κώδικας του μαθητή είναι συντακτικά σωστός "
         f"αλλά δεν ικανοποιεί τα κριτήρια της άσκησης.\n\n"
         f"Εκφώνηση: {current_task}\n"
-        f"Αξιολόγηση Assessor: {clean_fb}\n"
+        f"Ευρήματα ανάλυσης (ΜΟΝΟ για δική σου χρήση — μην αναφέρεις πώς προέκυψαν): {clean_fb}\n"
         + frequent_ctx
         + escalation_note
         + style_note
@@ -1286,7 +1322,9 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     avg_hints_per_task = float(state.get("avg_hints_per_task", 0.0))
     frustration_score = state.get("frustration_score", 0)
 
-    # Αυτόματη προσαρμογή δυσκολίας — ακολουθεί probe direction ώστε θεωρία και task να συμφωνούν
+    lesson = pick_lesson(state)
+
+    # Αυτόματη προσαρμογή δυσκολίας — ακολουθεί probe direction.
     if attempts >= 3 or difficulty_probe_direction == "downgrade":
         difficulty = "easy"
     elif difficulty_probe_direction == "upgrade" or experience == "expert":
@@ -1294,7 +1332,13 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
     else:
         difficulty = "easy"
 
-    lesson = pick_lesson(state)
+    # ΦΡΑΓΜΑ: η δυσκολία δεν ξεπερνά ποτέ τη δυσκολία θεωρίας που έχει ΠΡΑΓΜΑΤΙΚΑ δειχθεί για αυτό
+    # το μάθημα — το probe_direction μπορεί να ανέβει σε μεταγενέστερο turn από αυτό που έδειξε τη
+    # θεωρία, δίνοντας άσκηση (π.χ. append()) για κάτι που δεν διδάχθηκε ποτέ. Βλ. _shown_theory_difficulty.
+    _shown_difficulty = _shown_theory_difficulty(messages, lesson.get("id"))
+    if _shown_difficulty == "easy" and difficulty == "hard":
+        difficulty = "easy"
+
     chapter_header = _chapter_header(lesson)
     lesson_title = lesson.get("title", "")
     theory_raw = lesson.get("detailed_theory", "")
@@ -1457,7 +1501,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             intro_must_not=_intro_must_not,
             outro_must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
         )
-        deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+        deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]\n[THEORY_DIFFICULTY:{difficulty}:{lesson.get('id')}]"
     elif event_type == "lesson_advanced":
         intro, outro = _generate_mentor_intro_outro(
             context=f"Ο μαθητής πέρασε στο κεφάλαιο '{lesson_title}'. Ανακοίνωσε το ξεκίνημα, η θεωρία ακολουθεί αμέσως αυτούσια· μετά χρειάζεται και κλείνουσα ερώτηση για απορίες.",
@@ -1467,7 +1511,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
             intro_must_not="εξηγήσεις ή αναφέρεσαι στο περιεχόμενο της θεωρίας — αυτή ακολουθεί",
             outro_must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
         )
-        deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+        deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]\n[THEORY_DIFFICULTY:{difficulty}:{lesson.get('id')}]"
     elif event_type == "same_chapter_practice":
         # Ο μαθητής ζήτησε επιπλέον άσκηση στο ΙΔΙΟ κεφάλαιο πριν προχωρήσει —
         # δίνουμε κατευθείαν νέα άσκηση χωρίς θεωρία, χωρίς just_advanced path.
@@ -1571,7 +1615,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 intro_must_not="εξηγήσεις ή αναφέρεσαι στο περιεχόμενο της θεωρίας — αυτή ακολουθεί",
                 outro_must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
             )
-            deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+            deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]\n[THEORY_DIFFICULTY:{difficulty}:{lesson.get('id')}]"
         elif _is_repeat_exercise_mode(messages):
             error_ctx = ""
             if frequent_errors:
@@ -1614,7 +1658,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 intro_must_not="εξηγήσεις ή αναφέρεσαι στο περιεχόμενο της θεωρίας — αυτή ακολουθεί",
                 outro_must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
             )
-            deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+            deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]\n[THEORY_DIFFICULTY:{difficulty}:{lesson.get('id')}]"
         else:
             task_intro = _generate_mentor_response(
                 context=f"Δίνεις νέα άσκηση στον μαθητή στην ενότητα '{lesson_title}'. Η εκφώνηση ακολουθεί αμέσως — γράψε μόνο μια σύντομη εναρκτήρια φράση.",
@@ -1642,7 +1686,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
                 fallback="Έχεις καμιά απορία πάνω σε αυτά;"
             )
-            deterministic_content = f"{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+            deterministic_content = f"{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]\n[THEORY_DIFFICULTY:{difficulty}:{lesson.get('id')}]"
         elif intent == "code_help" and task_started and debug_report and "[DEBUG: EMPTY]" not in debug_report:
             decision_tag = "[ASSESSMENT:SUPPORT]" if assessment_decision == "support" else "[ASSESSMENT:REPEAT]"
             hint_text = _generate_hint_with_llm(debug_report, task, difficulty, understanding_level, assessment_feedback, frequent_errors, avg_hints_per_task, hint_count)
@@ -1783,7 +1827,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 intro_must_not="εξηγήσεις ή αναφέρεσαι στο περιεχόμενο της θεωρίας",
                 outro_must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
             )
-            deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+            deterministic_content = f"{intro}\n\n{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]\n[THEORY_DIFFICULTY:{difficulty}:{lesson.get('id')}]"
         else:
             # Θεωρία έχει ήδη δειχθεί → μόνο re-ask, χωρίς επανάληψη θεωρίας — 1 call αρκούσε ήδη
             outro = _generate_mentor_response(
@@ -1828,7 +1872,7 @@ def mentoring_node(state): # Κύρια συνάρτηση που διαχειρ
                 must_not="επαναλάβεις ή επεκτείνεις τη θεωρία",
                 fallback="Έχεις καμιά απορία; Αν είσαι έτοιμος/η, πες μου!"
             )
-            deterministic_content = f"{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]"
+            deterministic_content = f"{chapter_header}\n\n{theory}\n\n{outro}\n[AWAITING_QUESTIONS]\n[THEORY_DIFFICULTY:{difficulty}:{lesson.get('id')}]"
 
     # ── Επιστροφή αποτελέσματος ───────────────────────────────────────────────
     if deterministic_content is not None:
